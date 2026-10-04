@@ -1,4 +1,16 @@
 import { createModelRegistry } from "./registry.js";
+import { registrarModelos } from "./modelos/index.js";
+import { crearServicioEmpresas } from "./empresas.js";
+import { crearMiddlewarePermisos } from "./middleware.js";
+
+export {
+  conEmpresa,
+  empresaActual,
+  tenancyPlugin,
+  marcarGlobal,
+} from "./tenancy.js";
+export { permite } from "./permisos.js";
+export { hashPassword, verificarPassword } from "./password.js";
 
 // readyState de Mongoose: 0 desconectado, 1 conectado, 2 conectando, 3 desconectando
 const ESTADOS = {
@@ -30,15 +42,11 @@ export function createCore({ connection, plugins = [] } = {}) {
 
   const registry = createModelRegistry(connection, plugins);
 
-  return {
+  const core = {
     connection,
-    // Registra (o devuelve, si ya existe) un modelo sobre la conexión del gateway.
     model: registry.model,
-    // Plugin global que se aplicará a los modelos registrados DESPUÉS de llamarlo
-    // (pieza 2 lo usará para el filtro por empresaId).
     use: registry.use,
     estado: () => ESTADOS[connection.readyState],
-    // Útil para la ruta de salud del gateway.
     async ping() {
       if (connection.readyState !== 1)
         return { ok: false, estado: ESTADOS[connection.readyState] };
@@ -46,4 +54,10 @@ export function createCore({ connection, plugins = [] } = {}) {
       return { ok: true, estado: "conectado" };
     },
   };
+
+  core.modelos = registrarModelos(core);
+  core.empresas = crearServicioEmpresas(core.modelos);
+  core.requierePermiso = crearMiddlewarePermisos(core.modelos);
+
+  return core;
 }
