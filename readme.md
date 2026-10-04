@@ -1,100 +1,129 @@
 # core
 
-Núcleo común y flexible sobre el que se montan varios servicios (restaurante/cafetería, siscore y otros), para escribir el código una sola vez y mantenerlo más fácil.
+Núcleo común sobre el que se montan los servicios (restaurante, siscore, etc.). Se escribe una sola vez y cada servicio lo usa como dependencia.
 
-> **Estado:** pieza 1 (conexión). Las piezas siguientes (empresas, usuarios y permisos, motor de documentos, eventos) se irán agregando.
+El núcleo **no abre ni cierra conexiones**: usa la conexión de Mongoose que le entrega el gateway.
 
-## Principios
+## Estado
 
-- **No crea conexiones.** El núcleo se inicializa con la conexión de Mongoose que ya abrió el gateway. Nunca la abre ni la cierra.
-- **Mongoose es el estándar.** Se declara como `peerDependency` para que el gateway y el núcleo compartan una sola instancia. Si hace falta el driver nativo (por ejemplo para la colección `eventos`), está disponible en `connection.db`.
-- **Cada servicio recibe lo que necesita.** Los servicios exportan una función fábrica y el gateway la llama con el núcleo ya creado.
-
-## Requisitos
-
-- Node.js 18 o superior (el paquete usa ES modules: `"type": "module"`)
-- Mongoose 8 (lo instala el proyecto que usa el núcleo, no el núcleo)
+| Pieza | Estado |
+|---|---|
+| 1. Conexión | Hecha |
+| 2. Empresas, usuarios, membresías, roles y permisos | Hecha |
+| 3. Motor de documentos | Pendiente |
+| 4. Eventos | Pendiente |
 
 ## Instalación
 
-Desde el proyecto que lo usa (por ejemplo `Mi-Servidor`):
-
 ```bash
-npm install github:Hector3008/core mongoose
+npm install github:Hector3008/core
 ```
 
-> Ajusta `Hector3008/core` al nombre real del repositorio.
+`mongoose` es `peerDependency` (`^8.0.0 || ^9.0.0`): lo instala el proyecto que usa el núcleo, para que exista una sola instancia.
 
 ## Uso
 
 ```js
-import mongoose from 'mongoose';
-import { createCore } from 'core';
+import mongoose from "mongoose";
+import { createCore } from "core";
 
-const connection = await mongoose.createConnection(process.env.MONGO_URI).asPromise();
+const connection = await mongoose.createConnection(uri, { dbName: "mi-servidor" }).asPromise();
 const core = createCore({ connection });
 
-// Ruta de salud del gateway
-app.get('/servidor', async (_req, res) => res.json(await core.ping()));
-
-// Registrar un modelo sobre la conexión del gateway
-const Producto = core.model('Producto', new mongoose.Schema({ codigo: String }));
+await core.ping(); // { ok: true, estado: "conectado" }
 ```
 
 ## API
 
-### `createCore({ connection, plugins? })`
-
-| Parámetro | Tipo | Descripción |
-| --- | --- | --- |
-| `connection` | `mongoose.Connection` | Obligatorio. Conexión ya creada. Si no es una `Connection` de Mongoose, lanza un error. |
-| `plugins` | `Function[]` | Opcional. Plugins de Mongoose que se aplican a todos los modelos registrados con `core.model`. |
-
-Devuelve un objeto con:
-
 | Miembro | Descripción |
-| --- | --- |
-| `connection` | La misma conexión que se recibió. |
-| `model(nombre, schema, coleccion?)` | Registra un modelo sobre la conexión. Es idempotente: si el modelo ya existe, devuelve el existente en vez de fallar con `OverwriteModelError`. |
-| `use(plugin)` | Agrega un plugin global. Se aplica solo a los modelos registrados **después** de llamarlo. |
-| `estado()` | Devuelve `'desconectado'`, `'conectado'`, `'conectando'` o `'desconectando'`. |
-| `ping()` | Devuelve `{ ok, estado }`. Si hay conexión, hace un ping real a MongoDB. Pensado para la ruta de salud. |
+|---|---|
+| `createCore({ connection, plugins? })` | Valida que reciba una `Connection` de Mongoose y registra los modelos de la pieza 2. |
+| `core.model(nombre, schema, coleccion?)` | Registra un modelo sobre la conexión. Es idempotente. |
+| `core.use(plugin)` | Plugin global; se aplica a los modelos registrados después de llamarlo. |
+| `core.estado()` | `desconectado`, `conectado`, `conectando` o `desconectando`. |
+| `core.ping()` | `{ ok, estado }`; con la conexión abierta hace ping real a MongoDB. |
+| `core.modelos` | `Empresa`, `Usuario`, `Rol`, `Membresia`. |
+| `core.empresas` | `crearEmpresa`, `crearUsuario`, `agregarMiembro`. |
+| `core.requierePermiso(permiso)` | Middleware de Express que verifica el permiso del usuario en su empresa. |
 
-## Pruebas
+También se exportan: `conEmpresa`, `empresaActual`, `tenancyPlugin`, `marcarGlobal`, `permite`, `hashPassword` y `verificarPassword`.
 
-```bash
-npm install
-npm test
+## Multiempresa
+
+Toda colección de negocio lleva `empresaId`. El plugin `tenancyPlugin` filtra automáticamente cada consulta por la empresa activa, que se fija con `conEmpresa`:
+
+```js
+import { conEmpresa } from "core";
+
+await conEmpresa(empresaId, async () => {
+  return await Rol.find(); // solo roles de esa empresa
+});
 ```
 
-Las pruebas no necesitan una base de datos real: comprueban la validación de la conexión, `estado()`/`ping()` sin conexión abierta, y que `model()` sea idempotente y aplique los plugins.
+- Sin empresa activa, la consulta **lanza error** (en vez de filtrar mal).
+- Para tareas de plataforma: `.setOptions({ sinEmpresa: true })`.
+- `Empresa` y `Usuario` son globales (`marcarGlobal`) y no llevan `empresaId`.
+
+**Regla importante:** la consulta debe ejecutarse *dentro* de `conEmpresa`, con `await` en una función `async`. Si se devuelve la consulta sin ejecutar, corre fuera del contexto y falla.
+
+```js
+conEmpresa(id, () => Modelo.find());              // mal
+conEmpresa(id, async () => await Modelo.find());  // bien
+```
+
+## Usuarios, roles y permisos
+
+- **Usuario:** identidad global (correo, contraseña con hash `scrypt`). Puede estar en varias empresas.
+- **Membresía:** `{ usuarioId, empresaId, rolId, activa }`. Un solo rol por membresía.
+- **Rol:** `{ empresaId, nombre, permisos[] }`, por empresa. Al crear una empresa se copian las plantillas de rol de sus servicios (`src/modelos/plantillas.js`).
+- **Permisos:** formato `recurso:accion`. `*` es todo, `documento:*` es todo el recurso y `documento:crear` es exacto. Las estaciones son permisos: `estacion:cocina`, `estacion:revision`.
+
+```js
+router.post("/pedidos", core.requierePermiso("documento:crear"), crearPedido);
+```
+
+El middleware espera `req.auth = { usuarioId, empresaId }`, que debe dejar quien autentique (el login aún no forma parte del núcleo). Responde:
+
+| Código | Motivo |
+|---|---|
+| 401 | no autenticado |
+| 403 | sin acceso a esta empresa (sin membresía o membresía inactiva) |
+| 403 | permiso insuficiente |
+
+Si pasa, deja `req.membresia` y `req.rol`, y el resto de la request corre dentro de `conEmpresa`.
 
 ## Estructura
 
 ```
-core/
-├── package.json
-├── README.md
-├── src/
-│   ├── index.js      # createCore
-│   └── registry.js   # registro de modelos y plugins
-└── test/
-    └── core.test.js
+src/
+  index.js        createCore
+  registry.js     registro de modelos y plugins
+  tenancy.js      contexto de empresa y plugin de Mongoose
+  permisos.js     permite(permisos, requerido)
+  password.js     hash y verificación (scrypt)
+  empresas.js     crearEmpresa, crearUsuario, agregarMiembro
+  middleware.js   requierePermiso
+  modelos/        empresa, usuario, rol, membresia, plantillas
+test/
 ```
 
-## Hoja de ruta
+## Pruebas
 
-| # | Pieza | Estado |
-| --- | --- | --- |
-| 1 | Conexión | Hecha (falta probarla contra el MongoDB real desde el gateway) |
-| 2 | Empresas, usuarios, membresías, roles y permisos | Pendiente |
-| 3 | Motor de documentos (sobre, estados, versiones, numeración) | Pendiente |
-| 4 | Eventos | Pendiente |
-| 5 | Servicio restaurante | Pendiente |
-| 6 | Migración de siscore | Pendiente |
+```bash
+npm test
+```
 
-## Decisiones de diseño
+Usa el ejecutor de Node (`node --test`). La prueba de aislamiento entre empresas necesita una MongoDB real y se omite si no se define la variable:
 
-- Toda colección llevará `empresaId` (multiempresa). Un plugin de Mongoose, que se enganchará con `use()`, agregará el filtro a cada consulta.
-- El documento vive en `payload.doc` dentro de un sobre; `tipo` y `estado` van separados.
-- Los eventos capturados por la interfaz y por el servidor van en una colección aparte, solo de inserción.
+```powershell
+$env:MONGODB_URI="mongodb://localhost:27017"
+node --test test/tenancy.test.js
+```
+
+Trabaja en la base `core-test-tenancy` y borra su colección al terminar.
+
+## Convenciones
+
+- ES modules (`"type": "module"`); los imports relativos llevan extensión (`./registry.js`).
+- Nombres de archivo en minúscula.
+- Mongoose como estándar; el driver nativo (`connection.db`) solo para salidas puntuales.
