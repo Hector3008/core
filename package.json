@@ -1,0 +1,16 @@
+{
+  "name": "core",
+  "version": "0.1.0",
+  "description": "Núcleo común: conexión, tenancy, documentos y eventos",
+  "main": "src/index.js",
+  "type": "module",
+  "peerDependencies": {
+    "mongoose": "^8.0.0"
+  },
+  "devDependencies": {
+    "mongoose": "^8.0.0"
+  },
+  "scripts": {
+    "test": "node --test test/core.test.js"
+  }
+}

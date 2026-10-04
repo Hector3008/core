@@ -12,7 +12,7 @@ Núcleo común y flexible sobre el que se montan varios servicios (restaurante/c
 
 ## Requisitos
 
-- Node.js 18 o superior
+- Node.js 18 o superior (el paquete usa ES modules: `"type": "module"`)
 - Mongoose 8 (lo instala el proyecto que usa el núcleo, no el núcleo)
 
 ## Instalación
@@ -28,8 +28,8 @@ npm install github:Hector3008/core mongoose
 ## Uso
 
 ```js
-const mongoose = require('mongoose');
-const { createCore } = require('core');
+import mongoose from 'mongoose';
+import { createCore } from 'core';
 
 const connection = await mongoose.createConnection(process.env.MONGO_URI).asPromise();
 const core = createCore({ connection });
