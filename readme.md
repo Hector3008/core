@@ -221,4 +221,4 @@ Trabaja en la base `core-test-tenancy` y borra su colección al terminar.
 
 - ES modules (`"type": "module"`); los imports relativos llevan extensión (`./registry.js`).
 - Nombres de archivo en minúscula.
-- Mongoose como estándar; el driver nativo (`connection.db`) solo para salidas puntuales.
+- Mongoose como estándar; el driver nativo (`connection.db`) solo para salidas puntuales
