@@ -66,7 +66,8 @@ describe("motor de documentos", opts, () => {
   });
 
   after(async () => {
-    for (const c of COLECCIONES) await conn.db.dropCollection(c).catch(() => {});
+    await core.eventos.vaciar(); // el motor alimenta la colección de eventos en segundo plano
+    for (const c of [...COLECCIONES, "eventos"]) await conn.db.dropCollection(c).catch(() => {});
     await conn.close();
   });
 

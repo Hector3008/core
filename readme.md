@@ -11,7 +11,7 @@ El núcleo **no abre ni cierra conexiones**: usa la conexión de Mongoose que le
 | 1. Conexión | Hecha |
 | 2. Empresas, usuarios, membresías, roles y permisos | Hecha |
 | 3. Motor de documentos | Hecha |
-| 4. Eventos | Pendiente |
+| 4. Eventos | Hecha (pruebas con MongoDB real por correr) |
 
 ## Instalación
 
@@ -46,6 +46,7 @@ await core.ping(); // { ok: true, estado: "conectado" }
 | `core.empresas` | `crearEmpresa`, `crearUsuario`, `agregarMiembro`. |
 | `core.requierePermiso(permiso)` | Middleware de Express que verifica el permiso del usuario en su empresa. |
 | `core.documentos` | Motor de documentos: tipos, estados, versiones, numeración y eventos (ver más abajo). |
+| `core.eventos` | Colección `eventos` (solo inserción): recoge los eventos del motor y los lotes de la interfaz (ver más abajo). |
 
 También se exportan: `conEmpresa`, `empresaActual`, `tenancyPlugin`, `marcarGlobal`, `permite`, `hashPassword`, `verificarPassword` y `ErrorDocumento`.
 
@@ -222,3 +223,29 @@ Trabaja en la base `core-test-tenancy` y borra su colección al terminar.
 - ES modules (`"type": "module"`); los imports relativos llevan extensión (`./registry.js`).
 - Nombres de archivo en minúscula.
 - Mongoose como estándar; el driver nativo (`connection.db`) solo para salidas puntuales
+
+## Eventos
+
+Colección `eventos`, solo de inserción. Dos fuentes: el motor de documentos (automático, tipos `documento.creado`, `documento.estado`, `documento.version`) y la interfaz (lotes que envía el front).
+
+```js
+// 1) En las rutas de una estación: deja estación y sesión para los eventos del motor
+router.use(core.eventos.middleware({ estacion: "revision" }));
+
+// 2) Recibir lotes del front (necesita express.json() y req.auth)
+router.post("/eventos",
+  core.requierePermiso("estacion:revision"),
+  core.eventos.manejadorLote({ estacion: "revision" }));
+```
+
+El front genera un UUID por pestaña y lo manda en el encabezado `x-sesion-id`. La estación, la sesión y el usuario los fija el servidor; el cuerpo del cliente no puede cambiarlos. Para Socket.IO: `core.eventos.conContexto({ estacion, sesionId, usuarioId }, fn)`.
+
+| Miembro | Descripción |
+|---|---|
+| `core.eventos.middleware({ estacion })` | Middleware de Express que fija el contexto de la interacción. |
+| `core.eventos.manejadorLote({ estacion })` | Manejador POST `{ eventos: [{ tipo, documentoCode?, version?, ts?, datos? }] }`. 201, 400 o 401. |
+| `core.eventos.registrarLote({ eventos, estacion, sesionId, usuarioId })` | Guarda un lote (todo o nada, máx. 200). |
+| `core.eventos.conContexto(ctx, fn)` · `contextoActual()` | Contexto para Socket.IO y tareas. |
+| `core.eventos.listar({ documentoCode?, tipo?, estacion?, usuarioId?, sesionId?, desde?, hasta?, limite?, saltar? })` | Orden cronológico; máx. 500. |
+| `core.eventos.vaciar()` · `listo()` | Espera las escrituras en segundo plano · espera los índices. |
+| `ErrorEvento` | `EVENTO_INVALIDO`, `LOTE_INVALIDO`, `SOLO_INSERCION`. |

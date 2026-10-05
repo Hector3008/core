@@ -3,6 +3,7 @@ import { registrarModelos } from "./modelos/index.js";
 import { crearServicioEmpresas } from "./empresas.js";
 import { crearMiddlewarePermisos } from "./middleware.js";
 import { crearServicioDocumentos } from "./documentos/index.js";
+import { crearServicioEventos } from "./eventos/index.js";
 
 export {
   conEmpresa,
@@ -12,6 +13,7 @@ export {
 } from "./tenancy.js";
 export { permite } from "./permisos.js";
 export { ErrorDocumento } from "./documentos/index.js";
+export { ErrorEvento, conContexto, contextoActual } from "./eventos/index.js";
 export { hashPassword, verificarPassword } from "./password.js";
 
 // readyState de Mongoose: 0 desconectado, 1 conectado, 2 conectando, 3 desconectando
@@ -61,6 +63,7 @@ export function createCore({ connection, plugins = [] } = {}) {
   core.empresas = crearServicioEmpresas(core.modelos);
   core.requierePermiso = crearMiddlewarePermisos(core.modelos);
   core.documentos = crearServicioDocumentos(core.modelos);
+  core.eventos = crearServicioEventos(core.modelos, core.documentos);
 
   return core;
 }
