@@ -4,6 +4,7 @@ import { crearServicioEmpresas } from "./empresas.js";
 import { crearMiddlewarePermisos } from "./middleware.js";
 import { crearServicioDocumentos } from "./documentos/index.js";
 import { crearServicioEventos } from "./eventos/index.js";
+import { crearServicioAuth } from "./auth/index.js";
 
 export {
   conEmpresa,
@@ -14,6 +15,7 @@ export {
 export { permite } from "./permisos.js";
 export { ErrorDocumento } from "./documentos/index.js";
 export { ErrorEvento, conContexto, contextoActual } from "./eventos/index.js";
+export { ErrorAuth } from "./auth/index.js";
 export { hashPassword, verificarPassword } from "./password.js";
 
 // readyState de Mongoose: 0 desconectado, 1 conectado, 2 conectando, 3 desconectando
@@ -35,9 +37,9 @@ function esConexionMongoose(c) {
 
 /**
  * El núcleo NO abre ni cierra conexiones: usa la que le pasa el gateway.
- * @param {{ connection: import('mongoose').Connection, plugins?: Function[] }} opts
+ * @param {{ connection: import('mongoose').Connection, plugins?: Function[], auth?: object }} opts
  */
-export function createCore({ connection, plugins = [] } = {}) {
+export function createCore({ connection, plugins = [], auth = {} } = {}) {
   if (!esConexionMongoose(connection)) {
     throw new Error(
       "createCore: se requiere { connection } (una Connection de Mongoose ya creada)",
@@ -64,6 +66,8 @@ export function createCore({ connection, plugins = [] } = {}) {
   core.requierePermiso = crearMiddlewarePermisos(core.modelos);
   core.documentos = crearServicioDocumentos(core.modelos);
   core.eventos = crearServicioEventos(core.modelos, core.documentos);
+  core.auth = crearServicioAuth(core.modelos, auth);
+  core.autenticar = core.auth.autenticar;
 
   return core;
 }
