@@ -73,11 +73,11 @@ Una persona puede trabajar en varias empresas. La sesión recuerda en cuál. Cam
 
 ## 7. Lo que NO hace todavía
 
-Recuperar contraseña por correo, verificar correo, cambiar contraseña desde la interfaz, dos factores, el acceso por PIN, y la identidad del cliente final (será un `req.cliente` separado, en la pieza de clientes).
+Recuperar contraseña por correo, verificar correo, cambiar la contraseña desde la interfaz, dos factores, y la identidad del cliente final (será un `req.cliente` separado, en la pieza de clientes). El acceso por PIN sí está hecho: ver la sección 12.
 
-## 8. Preparado para el acceso por PIN
+## 8. Una sola puerta para crear sesiones
 
-`crearSesion({ usuarioId, empresaActivaId, metodo, dispositivoId })` es la única puerta por la que nace una sesión; `login` solo la usa tras validar la contraseña. El PIN será otro camino que llama a la misma función con `metodo: "pin"` y un `dispositivoId` (la tablet autorizada por un administrador). Todo lo demás (`autenticar`, caducidad, revocación, `requierePermiso`) funciona igual. Ya existen los campos `metodo` y `dispositivoId` en la sesión, y `req.sesionAuth` los expone a las rutas.
+`crearSesion({ usuarioId, empresaActivaId, metodo, dispositivoId, inactividadMs, maximoMs })` es la única función por la que nace una sesión. `login` la usa tras validar la contraseña y el PIN la usa tras validar el PIN (`metodo: "pin"`). Todo lo demás (`autenticar`, caducidad, revocación, `requierePermiso`) es idéntico para los dos caminos.
 
 ## 9. Configuración
 
@@ -92,11 +92,16 @@ Recuperar contraseña por correo, verificar correo, cambiar contraseña desde la
 | `intentosPorCuenta` / `intentosPorIp` | 5 / 30 | Fallos permitidos por ventana |
 | `ventanaIntentosMs` | 15 min | Ventana del limitador |
 | `cookie` | `{ nombre: "sid", secure: NODE_ENV==="production", sameSite: "Lax" }` | Ajustes de la cookie |
+| `pinPimienta` | (ninguna) | Secreto del servidor que se mezcla con cada PIN antes del hash (ver sección 12) |
+| `cookieDispositivo` / `dispositivoMaxMs` | `"did"` / 365 días | Cookie de la tablet emparejada |
+| `intentosCodigoPorIp` / `intentosPorDispositivo` | 10 / 20 | Fallos permitidos por ventana al emparejar y al entrar con PIN desde una tablet |
 | `ahora` | `Date.now` | Reloj (se cambia en pruebas) |
 
 ## 10. Errores y códigos HTTP
 
 `DATOS_INVALIDOS` 400 · `CREDENCIALES_INVALIDAS` 401 · `SIN_SESION` 401 (borra la cookie) · `CSRF` 403 · `SIN_ACCESO_EMPRESA` 403 · `EMPRESA_NO_SELECCIONADA` 409 · `DEMASIADOS_INTENTOS` 429.
+
+Del PIN: `PIN_INVALIDO` 400 · `CODIGO_INVALIDO` 401 · `DISPOSITIVO_INVALIDO` 401 (borra la cookie de la tablet) · `PIN_INCORRECTO` 401 · `PIN_NO_HABILITADO` 403 · `NO_ENCONTRADO` 404 · `PIN_BLOQUEADO` 423 (con `Retry-After`).
 
 ## 11. Trampas habituales
 
@@ -105,3 +110,72 @@ Recuperar contraseña por correo, verificar correo, cambiar contraseña desde la
 - **Front en otro origen** (por ejemplo Vite en otro puerto): la cookie necesita CORS con credenciales. Sirviendo el front desde el mismo gateway no hace falta.
 - **Cambió la contraseña o se perdió un dispositivo:** llamar a `core.auth.cerrarSesionesDe(usuarioId)`.
 - **Baja de un trabajador:** desactivar su membresía ya lo bloquea (`requierePermiso`); además conviene `cerrarSesionesDe`.
+
+## 12. Acceso por PIN en tablets
+
+### La idea
+
+En una cocina nadie va a escribir una contraseña larga con las manos mojadas. El PIN es otra forma de **crear la misma sesión**: la tablet ya está autorizada, la persona elige su nombre y escribe su PIN, y recibe una sesión normal con los permisos de su rol.
+
+Hay **dos secretos** y los dos hacen falta:
+
+| Secreto | Quién lo tiene | Qué demuestra |
+|---|---|---|
+| Cookie `did` (la tablet) | La tablet, un año | Este aparato lo autorizó un administrador |
+| PIN (4 a 6 dígitos) | La persona | Soy quien dice mi nombre |
+
+Un PIN de 4 dígitos son solo 10.000 combinaciones; si funcionara desde cualquier aparato se adivinaría fácil. Por eso solo vale en tablets emparejadas.
+
+### El recorrido
+
+1. **La empresa lo activa** (`PUT /auth/seguridad`). Viene apagado por defecto. Aquí se ajustan las opciones (sección "Opciones de cada empresa").
+2. **Se fija el PIN de cada persona.** La propia persona (`PUT /auth/pin`, con su contraseña o su PIN actual) o un administrador (`PUT /auth/usuarios/:usuarioId/pin`).
+3. **Se empareja la tablet.** Un administrador, ya autenticado, pide un código (`POST /auth/dispositivos/codigo`): 8 caracteres como `4A62-HYNW`, de un solo uso, que vence en 10 minutos (sin I, O, 0 ni 1 para no confundirlos). Se escribe en la tablet (`POST /auth/dispositivo/emparejar`) y el servidor le deja la cookie `did`. En la base de datos se guarda solo el hash del código y el del token de la tablet.
+4. **Cada persona entra.** La tablet pide `GET /auth/dispositivo/personas` (los nombres de quienes tienen PIN), la persona toca el suyo y escribe el PIN (`POST /auth/dispositivo/entrar`). Nace una sesión `metodo: "pin"` ligada a esa tablet.
+5. **Cambiar de persona** es volver a la lista de nombres: al entrar otra persona se cierra la sesión anterior. Si nadie toca la tablet, la sesión se cierra sola a los minutos que defina la empresa.
+
+### Seguridad
+
+- **Bloqueo por persona:** tras `maxIntentos` fallos seguidos el PIN de esa persona se bloquea `bloqueoMin` minutos, **también con el PIN correcto**. La cuenta de fallos y el bloqueo están en la base de datos (no se pierden al reiniciar) y valen para todas las tablets. Un acierto reinicia la cuenta; restablecer el PIN desbloquea. Efecto secundario aceptado: alguien podría bloquear a un compañero a propósito; el administrador lo desbloquea restableciendo su PIN.
+- **Límites extra:** 20 fallos por tablet y 10 intentos de código por IP, cada 15 minutos.
+- **PIN flojos rechazados:** `1111`, `1234`, `4321`, etc. Solo dígitos, y se envía como texto (`"0123"`, no el número 123).
+- **Mismo error** para PIN malo, persona sin PIN o de otra empresa, y verificación contra un hash falso para igualar tiempos.
+- **Pimienta:** un PIN corto se adivinaría en segundos si alguien copiara la base de datos (hay pocas combinaciones). Con `auth: { pinPimienta }` el PIN se mezcla con un secreto del servidor antes del hash, así la base de datos sola no basta. Guárdalo en una variable de entorno (por ejemplo `AUTH_PIN_PIMIENTA`) y no lo cambies: cambiarlo invalida todos los PIN.
+- **Revocación inmediata:** revocar una tablet (`DELETE /auth/dispositivos/:id`) cierra todas sus sesiones y la deja inservible; la tablet recibe `DISPOSITIVO_INVALIDO`, se le borra la cookie y debe mostrar la pantalla de emparejar. Cambiar o quitar el PIN de una persona cierra sus sesiones de PIN abiertas.
+
+### Qué puede hacer una sesión de PIN
+
+**Lo mismo que el rol de esa persona** (decisión de diseño). Consecuencia: una tablet de cocina dejada abierta alcanza todo lo que el rol de quien entró permita. Recomendación práctica: que los roles que usan PIN no tengan permisos de administración, y que el administrador no deje su sesión de PIN abierta en una tablet compartida. `req.sesionAuth.metodo` permite a una ruta distinguir contraseña de PIN si algún día hace falta exigir contraseña para algo delicado.
+
+### Opciones de cada empresa (`Empresa.seguridad.pin`)
+
+| Opción | Por defecto | Rango | Qué hace |
+|---|---|---|---|
+| `habilitado` | `false` | | Activa el PIN y el emparejamiento |
+| `largoMin` / `largoMax` | 4 / 6 | 4 a 6 | Largo permitido del PIN |
+| `maxIntentos` | 5 | 3 a 10 | Fallos seguidos antes del bloqueo |
+| `bloqueoMin` | 15 | 1 a 1440 | Minutos de bloqueo |
+| `inactividadMin` | 10 | 1 a 120 | Minutos sin usar la tablet antes de cerrar la sesión |
+| `sesionMaxHoras` | 12 | 1 a 24 | Vida máxima de una sesión de PIN |
+| `codigoVigenciaMin` | 10 | 1 a 60 | Cuánto dura un código de emparejamiento |
+
+Los cambios solo afectan a lo que se haga después (un PIN ya guardado con 4 dígitos sigue valiendo aunque luego se exijan 5). Cada petición de la tablet relee la configuración, así que un cambio del administrador rige de inmediato.
+
+### Rutas (todas las monta `core.auth.montarRutas(router)`)
+
+| Ruta | Quién | Permiso |
+|---|---|---|
+| `GET` / `PUT /seguridad` | Administración | `empresa:seguridad` |
+| `POST /dispositivos/codigo` · `GET /dispositivos` · `DELETE /dispositivos/:id` | Administración | `dispositivo:gestionar` |
+| `GET /usuarios` · `PUT` / `DELETE /usuarios/:usuarioId/pin` | Administración | `usuario:gestionar` |
+| `PUT /pin` | La propia persona | sesión iniciada |
+| `POST /dispositivo/emparejar` · `GET /dispositivo/personas` · `POST /dispositivo/entrar` | La tablet | cookie `did` (emparejar: código) |
+
+El rol `admin` (`*`) ya tiene los tres permisos nuevos; otros roles los reciben cuando se les añadan.
+
+### Para el front de la tablet
+
+- Todos los POST/PUT/DELETE llevan `x-requested-with`.
+- Si `GET /auth/dispositivo/personas` responde 401 `DISPOSITIVO_INVALIDO`, mostrar la pantalla de emparejar.
+- Si `POST /auth/dispositivo/entrar` responde 423, mostrar el tiempo de espera (`reintentarEnSeg`).
+- `GET /auth/dispositivo/personas` devuelve también `largoMin`, `largoMax` e `inactividadMin`, para dibujar el teclado y el temporizador de bloqueo.

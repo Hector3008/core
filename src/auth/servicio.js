@@ -4,6 +4,7 @@ import { ErrorAuth } from "./errores.js";
 import { generarToken, hashToken } from "./tokens.js";
 import { leerCookie, serializarCookie } from "./cookies.js";
 import { crearLimitador } from "./limitador.js";
+import { crearServicioPin } from "./pin.js";
 
 const MIN = 60_000;
 const HORA = 60 * MIN;
@@ -20,12 +21,15 @@ const ID = /^[0-9a-f]{24}$/i;
  *
  * Deja `req.auth = { usuarioId, empresaId }`, que es lo que espera `core.requierePermiso`.
  */
-export function crearServicioAuth({ Usuario, Membresia, Rol, Empresa, Sesion }, opciones = {}) {
+export function crearServicioAuth(modelos, opciones = {}) {
+  const { Usuario, Membresia, Rol, Empresa, Sesion, Dispositivo, CodigoEmparejamiento } = modelos;
   const cfg = {
     inactividadMs: opciones.inactividadMs ?? 12 * HORA, // sin usarla, la sesión caduca
     maximoMs: opciones.maximoMs ?? 30 * DIA, // vida máxima aunque se use siempre
     toqueMs: opciones.toqueMs ?? 5 * MIN, // cada cuánto se renueva (evita una escritura por request)
     protegerCsrf: opciones.protegerCsrf ?? true,
+    cookieDispositivo: opciones.cookieDispositivo ?? "did", // cookie de la tablet emparejada
+    dispositivoMaxMs: opciones.dispositivoMaxMs ?? 365 * DIA,
     ahora: opciones.ahora ?? Date.now,
     cookie: {
       nombre: "sid",
@@ -51,6 +55,19 @@ export function crearServicioAuth({ Usuario, Membresia, Rol, Empresa, Sesion }, 
     });
   const cookieBorrada = () =>
     serializarCookie(cookieNombre(), "", {
+      maxAgeSeg: 0,
+      secure: cfg.cookie.secure,
+      sameSite: cfg.cookie.sameSite,
+    });
+  // La cookie de la tablet dura un año: es lo que la identifica como dispositivo autorizado.
+  const cookieDispositivoDe = (token) =>
+    serializarCookie(cfg.cookieDispositivo, token, {
+      maxAgeSeg: cfg.dispositivoMaxMs / 1000,
+      secure: cfg.cookie.secure,
+      sameSite: cfg.cookie.sameSite,
+    });
+  const cookieDispositivoBorrada = () =>
+    serializarCookie(cfg.cookieDispositivo, "", {
       maxAgeSeg: 0,
       secure: cfg.cookie.secure,
       sameSite: cfg.cookie.sameSite,
@@ -96,6 +113,8 @@ export function crearServicioAuth({ Usuario, Membresia, Rol, Empresa, Sesion }, 
     dispositivoId = null,
     ip = null,
     agente = null,
+    inactividadMs = null, // null = la general; el PIN usa la de la empresa
+    maximoMs = null,
   }) {
     const token = generarToken();
     const t = cfg.ahora();
@@ -107,8 +126,9 @@ export function crearServicioAuth({ Usuario, Membresia, Rol, Empresa, Sesion }, 
       dispositivoId,
       creadaTs: new Date(t),
       ultimoUsoTs: new Date(t),
-      expiraTs: new Date(t + cfg.inactividadMs),
-      venceAbsolutoTs: new Date(t + cfg.maximoMs),
+      inactividadMs,
+      expiraTs: new Date(t + (inactividadMs ?? cfg.inactividadMs)),
+      venceAbsolutoTs: new Date(t + (maximoMs ?? cfg.maximoMs)),
       ip,
       agente: agente ? String(agente).slice(0, 200) : null,
     });
@@ -131,8 +151,21 @@ export function crearServicioAuth({ Usuario, Membresia, Rol, Empresa, Sesion }, 
       await Sesion.deleteMany({ usuarioId: s.usuarioId });
       return null;
     }
-    if (t - s.ultimoUsoTs.getTime() >= cfg.toqueMs) {
-      const expiraTs = new Date(Math.min(t + cfg.inactividadMs, s.venceAbsolutoTs.getTime()));
+    // Una sesión de PIN depende de una tablet: si se revocó, la sesión muere con ella.
+    if (s.dispositivoId) {
+      const d = await Dispositivo.findOne({ _id: s.dispositivoId, activo: true })
+        .setOptions({ sinEmpresa: true })
+        .select("_id")
+        .lean();
+      if (!d) {
+        await Sesion.deleteOne({ _id: s._id });
+        return null;
+      }
+    }
+    const inactividad = s.inactividadMs ?? cfg.inactividadMs;
+    const toque = Math.min(cfg.toqueMs, Math.floor(inactividad / 4)); // sesiones cortas se renuevan más a menudo
+    if (t - s.ultimoUsoTs.getTime() >= toque) {
+      const expiraTs = new Date(Math.min(t + inactividad, s.venceAbsolutoTs.getTime()));
       await Sesion.updateOne({ _id: s._id }, { ultimoUsoTs: new Date(t), expiraTs });
       s.ultimoUsoTs = new Date(t);
       s.expiraTs = expiraTs;
@@ -218,12 +251,16 @@ export function crearServicioAuth({ Usuario, Membresia, Rol, Empresa, Sesion }, 
       membresiasDe(s.usuarioId),
     ]);
     const activa = empresas.find((e) => e.id === String(s.empresaActivaId)) ?? null;
+    const disp = s.dispositivoId
+      ? await Dispositivo.findOne({ _id: s.dispositivoId }).setOptions({ sinEmpresa: true }).lean()
+      : null;
     return {
       usuario: { id: String(usuario._id), correo: usuario.correo, nombre: usuario.nombre ?? null },
       empresas: empresas.map(sinPermisos),
       empresaActivaId: activa?.id ?? null,
       permisos: activa?.permisos ?? [],
       metodo: s.metodo,
+      dispositivo: disp ? { id: String(disp._id), nombre: disp.nombre, estacion: disp.estacion } : null,
     };
   }
 
@@ -249,9 +286,17 @@ export function crearServicioAuth({ Usuario, Membresia, Rol, Empresa, Sesion }, 
   function responderError(res, e, next) {
     if (!(e instanceof ErrorAuth)) return next(e);
     if (e.codigo === "SIN_SESION") res.setHeader("Set-Cookie", cookieBorrada());
-    if (e.codigo === "DEMASIADOS_INTENTOS" && e.detalle?.reintentarEnSeg)
+    if (e.codigo === "DISPOSITIVO_INVALIDO") res.setHeader("Set-Cookie", cookieDispositivoBorrada());
+    if (
+      (e.codigo === "DEMASIADOS_INTENTOS" || e.codigo === "PIN_BLOQUEADO") &&
+      e.detalle?.reintentarEnSeg
+    )
       res.setHeader("Retry-After", String(e.detalle.reintentarEnSeg));
-    return res.status(e.status).json({ error: e.message, codigo: e.codigo });
+    return res.status(e.status).json({
+      error: e.message,
+      codigo: e.codigo,
+      ...(e.codigo === "PIN_BLOQUEADO" ? { reintentarEnSeg: e.detalle?.reintentarEnSeg } : {}),
+    });
   }
 
   /**
@@ -329,7 +374,19 @@ export function crearServicioAuth({ Usuario, Membresia, Rol, Empresa, Sesion }, 
     },
   };
 
+  const pin = crearServicioPin(modelos, {
+    cfg,
+    opciones,
+    crearSesion,
+    cerrarSesion,
+    responderError,
+    exigirCsrf,
+    cookieDe,
+    cookieDispositivoDe,
+  });
+
   return {
+    ...pin.api,
     login,
     crearSesion,
     obtenerSesion,
@@ -337,7 +394,8 @@ export function crearServicioAuth({ Usuario, Membresia, Rol, Empresa, Sesion }, 
     cerrarSesionesDe,
     cambiarEmpresa,
     autenticar,
-    manejadores,
-    listo: () => Sesion.init().then(() => undefined),
+    manejadores: { ...manejadores, ...pin.manejadores },
+    listo: () =>
+      Promise.all([Sesion.init(), Dispositivo.init(), CodigoEmparejamiento.init()]).then(() => undefined),
   };
 }

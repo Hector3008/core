@@ -13,6 +13,20 @@ export const empresaSchema = marcarGlobal(
         trim: true,
       },
       activa: { type: Boolean, default: true },
+      // Opciones de seguridad que ajusta cada empresa. Los valores por defecto y los límites
+      // viven en auth/pin-config.js (no en el esquema) para validarlos con mensajes claros.
+      seguridad: {
+        pin: {
+          habilitado: Boolean,
+          largoMin: Number,
+          largoMax: Number,
+          maxIntentos: Number,
+          bloqueoMin: Number,
+          inactividadMin: Number,
+          sesionMaxHoras: Number,
+          codigoVigenciaMin: Number,
+        },
+      },
       servicios: [
         {
           _id: false,

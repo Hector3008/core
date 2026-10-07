@@ -5,6 +5,7 @@ import { crearMiddlewarePermisos } from "./middleware.js";
 import { crearServicioDocumentos } from "./documentos/index.js";
 import { crearServicioEventos } from "./eventos/index.js";
 import { crearServicioAuth } from "./auth/index.js";
+import { montarRutas } from "./auth/rutas.js";
 
 export {
   conEmpresa,
@@ -68,6 +69,7 @@ export function createCore({ connection, plugins = [], auth = {} } = {}) {
   core.eventos = crearServicioEventos(core.modelos, core.documentos);
   core.auth = crearServicioAuth(core.modelos, auth);
   core.autenticar = core.auth.autenticar;
+  core.auth.montarRutas = (router) => montarRutas(router, core);
 
   return core;
 }

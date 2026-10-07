@@ -8,11 +8,12 @@ export const sesionSchema = marcarGlobal(
     tokenHash: { type: String, required: true, unique: true },
     usuarioId: { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
     empresaActivaId: { type: mongoose.Schema.Types.ObjectId, default: null },
-    // Cómo se autenticó. Hoy solo "password"; el acceso por PIN agregará "pin" (y usará dispositivoId).
-    metodo: { type: String, enum: ["password"], default: "password" },
+    // Cómo se autenticó: "password" o "pin" (en este caso con dispositivoId = la tablet emparejada).
+    metodo: { type: String, enum: ["password", "pin"], default: "password" },
     dispositivoId: { type: mongoose.Schema.Types.ObjectId, default: null },
     creadaTs: { type: Date, required: true },
     ultimoUsoTs: { type: Date, required: true },
+    inactividadMs: { type: Number, default: null }, // propia de la sesión (PIN: la fija la empresa); null = la general
     expiraTs: { type: Date, required: true }, // por inactividad; se renueva al usarla
     venceAbsolutoTs: { type: Date, required: true }, // tope: no se renueva nunca
     ip: { type: String, default: null },

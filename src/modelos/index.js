@@ -9,6 +9,7 @@ import {
 } from "../documentos/modelos.js";
 import { eventoSchema } from "../eventos/modelo.js";
 import { sesionSchema } from "../auth/modelo.js";
+import { dispositivoSchema, codigoSchema } from "../auth/modelos-pin.js";
 
 // core.model(nombre, schema, coleccion?) ya existe en la pieza 1
 export function registrarModelos(core) {
@@ -26,5 +27,7 @@ export function registrarModelos(core) {
     Contador: core.model("Contador", contadorSchema, "contadores"),
     Evento: core.model("Evento", eventoSchema, "eventos"),
     Sesion: core.model("Sesion", sesionSchema, "sesiones"),
+    Dispositivo: core.model("Dispositivo", dispositivoSchema, "dispositivos"),
+    CodigoEmparejamiento: core.model("CodigoEmparejamiento", codigoSchema, "codigos_emparejamiento"),
   };
 }
