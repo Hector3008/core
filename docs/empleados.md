@@ -37,5 +37,5 @@ Propia: `POST /auth/password` (`passwordActual`, `passwordNueva`). Las rutas `PU
 const empleados = express.Router();
 empleados.use(express.json());
 core.empleados.montarRutas(empleados);
-app.use("/empleados", empleados);
+gateway.use("/empleados", empleados);
 ```

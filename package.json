@@ -12,5 +12,8 @@
   },
   "scripts": {
     "test": "node --test"
+  },
+  "dependencies": {
+    "libphonenumber-js": "^1.13.14"
   }
 }
