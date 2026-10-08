@@ -6,6 +6,8 @@ import { crearServicioDocumentos } from "./documentos/index.js";
 import { crearServicioEventos } from "./eventos/index.js";
 import { crearServicioAuth } from "./auth/index.js";
 import { montarRutas } from "./auth/rutas.js";
+import { crearServicioEmpleados } from "./empleados/index.js";
+import { montarRutasEmpleados } from "./empleados/rutas.js";
 
 export {
   conEmpresa,
@@ -17,6 +19,7 @@ export { permite } from "./permisos.js";
 export { ErrorDocumento } from "./documentos/index.js";
 export { ErrorEvento, conContexto, contextoActual } from "./eventos/index.js";
 export { ErrorAuth } from "./auth/index.js";
+export { ErrorEmpleado } from "./empleados/errores.js";
 export { hashPassword, verificarPassword } from "./password.js";
 
 // readyState de Mongoose: 0 desconectado, 1 conectado, 2 conectando, 3 desconectando
@@ -69,7 +72,9 @@ export function createCore({ connection, plugins = [], auth = {} } = {}) {
   core.eventos = crearServicioEventos(core.modelos, core.documentos);
   core.auth = crearServicioAuth(core.modelos, auth);
   core.autenticar = core.auth.autenticar;
+  core.empleados = crearServicioEmpleados(core.modelos, core.auth);
   core.auth.montarRutas = (router) => montarRutas(router, core);
+  core.empleados.montarRutas = (router) => montarRutasEmpleados(router, core);
 
   return core;
 }

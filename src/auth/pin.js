@@ -28,7 +28,7 @@ const esSecuencia = (p) => {
   return asc || desc;
 };
 
-function validarFormatoPin(pin, { largoMin, largoMax }) {
+export function validarFormatoPin(pin, { largoMin, largoMax }) {
   if (typeof pin !== "string" || !/^\d+$/.test(pin))
     throw new ErrorAuth("PIN_INVALIDO", "el PIN debe ser un texto de solo dígitos");
   if (pin.length < largoMin || pin.length > largoMax)

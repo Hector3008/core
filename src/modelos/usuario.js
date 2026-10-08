@@ -19,6 +19,8 @@ export const usuarioSchema = marcarGlobal(
         default: "activo",
       },
       paginaPrincipal: { type: String }, // preferencia del usuario
+      // Contraseña temporal dada por un administrador: hasta cambiarla, la sesión solo sirve para cambiarla.
+      debeCambiarPassword: { type: Boolean, default: false },
     },
     { timestamps: true },
   ),

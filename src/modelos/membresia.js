@@ -10,6 +10,7 @@ export const membresiaSchema = new mongoose.Schema(
     },
     rolId: { type: mongoose.Schema.Types.ObjectId, required: true }, // un solo rol
     activa: { type: Boolean, default: true },
+    telefono: { type: String, default: null }, // ficha del empleado en esta empresa (no es global)
     // PIN de acceso rápido (por persona y por empresa). Se guarda con hash, nunca en claro.
     pinHash: { type: String, select: false, default: null },
     pinFallos: { type: Number, default: 0 },

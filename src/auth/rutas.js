@@ -8,7 +8,7 @@
  *   core.auth.montarRutas(auth);
  *   app.use("/auth", auth);
  */
-export function montarRutas(router, { auth, autenticar, requierePermiso }) {
+export function montarRutas(router, { auth, autenticar, requierePermiso, empleados }) {
   const m = auth.manejadores;
   const con = (permiso) => [autenticar(), requierePermiso(permiso)];
 
@@ -17,6 +17,8 @@ export function montarRutas(router, { auth, autenticar, requierePermiso }) {
   router.post("/logout", m.logout);
   router.get("/yo", m.yo);
   router.post("/empresa", m.empresa);
+  // Cambiar mi contraseña (también con una contraseña temporal pendiente: ahí está el sentido)
+  router.post("/password", m.cambiarPassword);
 
   // Mi propio PIN (hace falta estar autenticado en una empresa)
   router.put("/pin", autenticar(), m.cambiarMiPin);
@@ -28,8 +30,10 @@ export function montarRutas(router, { auth, autenticar, requierePermiso }) {
   router.get("/dispositivos", ...con("dispositivo:gestionar"), m.listarDispositivos);
   router.delete("/dispositivos/:id", ...con("dispositivo:gestionar"), m.revocarDispositivo);
   router.get("/usuarios", ...con("usuario:gestionar"), m.listarUsuarios);
-  router.put("/usuarios/:usuarioId/pin", ...con("usuario:gestionar"), m.establecerPin);
-  router.delete("/usuarios/:usuarioId/pin", ...con("usuario:gestionar"), m.quitarPin);
+  // Con la gestión de empleados, el PIN de otra persona pasa por la regla de alcance: un encargado
+  // no puede ponerle PIN a un admin (y entrar como él en la tablet).
+  router.put("/usuarios/:usuarioId/pin", ...con("usuario:gestionar"), empleados?.manejadores.establecerPin ?? m.establecerPin);
+  router.delete("/usuarios/:usuarioId/pin", ...con("usuario:gestionar"), empleados?.manejadores.quitarPin ?? m.quitarPin);
 
   // La tablet (no hay sesión de persona: solo la cookie del dispositivo)
   router.post("/dispositivo/emparejar", m.emparejar);

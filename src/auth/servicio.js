@@ -5,6 +5,7 @@ import { generarToken, hashToken } from "./tokens.js";
 import { leerCookie, serializarCookie } from "./cookies.js";
 import { crearLimitador } from "./limitador.js";
 import { crearServicioPin } from "./pin.js";
+import { validarPassword } from "./politica-password.js";
 
 const MIN = 60_000;
 const HORA = 60 * MIN;
@@ -41,6 +42,7 @@ export function crearServicioAuth(modelos, opciones = {}) {
   const ventanaMs = opciones.ventanaIntentosMs ?? 15 * MIN;
   const porCuenta = crearLimitador({ max: opciones.intentosPorCuenta ?? 5, ventanaMs, ahora: cfg.ahora });
   const porIp = crearLimitador({ max: opciones.intentosPorIp ?? 30, ventanaMs, ahora: cfg.ahora });
+  const porCambioPassword = crearLimitador({ max: 5, ventanaMs, ahora: cfg.ahora });
 
   // Hash de mentira para gastar el mismo tiempo cuando el correo no existe (ver login).
   let hashFalso = null;
@@ -146,11 +148,12 @@ export function crearServicioAuth(modelos, opciones = {}) {
       return null;
     }
     // Defensa en profundidad: si el usuario se suspendió, sus sesiones dejan de valer al instante.
-    const u = await Usuario.findById(s.usuarioId).select("estado").lean();
+    const u = await Usuario.findById(s.usuarioId).select("estado debeCambiarPassword").lean();
     if (!u || u.estado !== "activo") {
       await Sesion.deleteMany({ usuarioId: s.usuarioId });
       return null;
     }
+    s.$locals.debeCambiarPassword = !!u.debeCambiarPassword;
     // Una sesión de PIN depende de una tablet: si se revocó, la sesión muere con ella.
     if (s.dispositivoId) {
       const d = await Dispositivo.findOne({ _id: s.dispositivoId, activo: true })
@@ -229,7 +232,36 @@ export function crearServicioAuth(modelos, opciones = {}) {
       usuario: { id: String(usuario._id), correo: usuario.correo, nombre: usuario.nombre ?? null },
       empresas: empresas.map(sinPermisos),
       empresaActivaId,
+      debeCambiarPassword: !!usuario.debeCambiarPassword,
     };
+  }
+
+  /**
+   * La persona cambia su propia contraseña (hay que dar la actual). Cierra el resto de sus sesiones
+   * (también las de tablet); la sesión desde la que se cambia sigue abierta.
+   */
+  async function cambiarPassword({ usuarioId, passwordActual, passwordNueva, sesionId = null }) {
+    if (typeof passwordActual !== "string" || !passwordActual || passwordActual.length > 1024)
+      throw new ErrorAuth("DATOS_INVALIDOS", "contraseña actual requerida");
+    validarPassword(passwordNueva);
+    if (passwordNueva === passwordActual)
+      throw new ErrorAuth("DATOS_INVALIDOS", "la contraseña nueva debe ser distinta de la actual");
+    const clave = String(usuarioId);
+    const espera = porCambioPassword.espera(clave);
+    if (espera > 0)
+      throw new ErrorAuth("DEMASIADOS_INTENTOS", "demasiados intentos, espera un momento", { reintentarEnSeg: espera });
+    const u = await Usuario.findById(usuarioId).select("+passwordHash");
+    if (!u || !(await verificarPassword(passwordActual, u.passwordHash))) {
+      porCambioPassword.fallo(clave);
+      throw new ErrorAuth("CREDENCIALES_INVALIDAS", "contraseña actual incorrecta");
+    }
+    porCambioPassword.exito(clave);
+    await Usuario.updateOne(
+      { _id: u._id },
+      { passwordHash: await hashPassword(passwordNueva), debeCambiarPassword: false },
+    );
+    const cerradas = await cerrarSesionesDe(u._id, { exceptoSesionId: sesionId });
+    return { ok: true, sesionesCerradas: cerradas };
   }
 
   async function cambiarEmpresa({ token, empresaId }) {
@@ -260,6 +292,7 @@ export function crearServicioAuth(modelos, opciones = {}) {
       empresaActivaId: activa?.id ?? null,
       permisos: activa?.permisos ?? [],
       metodo: s.metodo,
+      debeCambiarPassword: !!usuario.debeCambiarPassword,
       dispositivo: disp ? { id: String(disp._id), nombre: disp.nombre, estacion: disp.estacion } : null,
     };
   }
@@ -273,11 +306,14 @@ export function crearServicioAuth(modelos, opciones = {}) {
       throw new ErrorAuth("CSRF", "falta la cabecera x-requested-with");
   }
 
-  async function sesionDe(req, { requiereEmpresa }) {
+  async function sesionDe(req, { requiereEmpresa, permitirCambioPendiente = false }) {
     exigirCsrf(req);
     const token = leerCookie(req.headers?.cookie, cookieNombre());
     const s = await obtenerSesion(token);
     if (!s) throw new ErrorAuth("SIN_SESION", "no autenticado");
+    // Con contraseña temporal pendiente, la sesión de contraseña solo sirve para cambiarla.
+    if (!permitirCambioPendiente && s.metodo === "password" && s.$locals?.debeCambiarPassword)
+      throw new ErrorAuth("CAMBIO_PASSWORD_REQUERIDO", "debes cambiar tu contraseña temporal antes de continuar");
     if (requiereEmpresa && !s.empresaActivaId)
       throw new ErrorAuth("EMPRESA_NO_SELECCIONADA", "elige una empresa");
     return { sesion: s, token };
@@ -304,10 +340,10 @@ export function crearServicioAuth(modelos, opciones = {}) {
    * Con { requiereEmpresa: false } deja pasar sesiones que aún no eligieron empresa.
    */
   const autenticar =
-    ({ requiereEmpresa = true } = {}) =>
+    ({ requiereEmpresa = true, permitirCambioPendiente = false } = {}) =>
     async (req, res, next) => {
       try {
-        const { sesion } = await sesionDe(req, { requiereEmpresa });
+        const { sesion } = await sesionDe(req, { requiereEmpresa, permitirCambioPendiente });
         req.auth = {
           usuarioId: String(sesion.usuarioId),
           empresaId: sesion.empresaActivaId ? String(sesion.empresaActivaId) : null,
@@ -339,6 +375,7 @@ export function crearServicioAuth(modelos, opciones = {}) {
           usuario: r.usuario,
           empresas: r.empresas,
           empresaActivaId: r.empresaActivaId,
+          debeCambiarPassword: r.debeCambiarPassword,
         });
       } catch (e) {
         responderError(res, e, next);
@@ -356,8 +393,24 @@ export function crearServicioAuth(modelos, opciones = {}) {
     },
     async yo(req, res, next) {
       try {
-        const { sesion } = await sesionDe(req, { requiereEmpresa: false });
+        const { sesion } = await sesionDe(req, { requiereEmpresa: false, permitirCambioPendiente: true });
         res.status(200).json(await contexto(sesion));
+      } catch (e) {
+        responderError(res, e, next);
+      }
+    },
+    async cambiarPassword(req, res, next) {
+      try {
+        const { sesion } = await sesionDe(req, { requiereEmpresa: false, permitirCambioPendiente: true });
+        if (sesion.metodo !== "password")
+          throw new ErrorAuth("SESION_NO_PERMITIDA", "la contraseña solo se cambia con una sesión de contraseña");
+        const r = await cambiarPassword({
+          usuarioId: sesion.usuarioId,
+          passwordActual: req.body?.passwordActual,
+          passwordNueva: req.body?.passwordNueva,
+          sesionId: sesion._id,
+        });
+        res.status(200).json(r);
       } catch (e) {
         responderError(res, e, next);
       }
@@ -393,6 +446,8 @@ export function crearServicioAuth(modelos, opciones = {}) {
     cerrarSesion,
     cerrarSesionesDe,
     cambiarEmpresa,
+    cambiarPassword,
+    exigirCsrf,
     autenticar,
     manejadores: { ...manejadores, ...pin.manejadores },
     listo: () =>
