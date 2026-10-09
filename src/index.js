@@ -10,6 +10,8 @@ import { crearServicioEmpleados } from "./empleados/index.js";
 import { montarRutasEmpleados } from "./empleados/rutas.js";
 import { crearServicioClientes } from "./clientes/index.js";
 import { montarRutasClientes } from "./clientes/rutas.js";
+import { crearServicioCatalogo } from "./catalogo/index.js";
+import { montarRutasCatalogo } from "./catalogo/rutas.js";
 
 export {
   conEmpresa,
@@ -23,6 +25,7 @@ export { ErrorEvento, conContexto, contextoActual } from "./eventos/index.js";
 export { ErrorAuth } from "./auth/index.js";
 export { ErrorEmpleado } from "./empleados/errores.js";
 export { ErrorCliente } from "./clientes/errores.js";
+export { ErrorCatalogo } from "./catalogo/errores.js";
 export { hashPassword, verificarPassword } from "./password.js";
 
 // readyState de Mongoose: 0 desconectado, 1 conectado, 2 conectando, 3 desconectando
@@ -77,9 +80,11 @@ export function createCore({ connection, plugins = [], auth = {} } = {}) {
   core.autenticar = core.auth.autenticar;
   core.empleados = crearServicioEmpleados(core.modelos, core.auth);
   core.clientes = crearServicioClientes(core.modelos, core.auth);
+  core.catalogo = crearServicioCatalogo(core.modelos, core.auth);
   core.auth.montarRutas = (router) => montarRutas(router, core);
   core.empleados.montarRutas = (router) => montarRutasEmpleados(router, core);
   core.clientes.montarRutas = (router) => montarRutasClientes(router, core);
+  core.catalogo.montarRutas = (router) => montarRutasCatalogo(router, core);
 
   return core;
 }

@@ -16,6 +16,8 @@ export const empresaSchema = marcarGlobal(
       // País de la empresa (ISO de 2 letras). Fija el código telefónico por defecto de sus clientes.
       // Las empresas anteriores a este campo no lo tienen: se asume PE (ver telefono.js).
       pais: { type: String, default: "PE", uppercase: true, trim: true },
+      // Moneda de los precios del catálogo (ISO 4217 de 3 letras). Las empresas anteriores al campo asumen PEN.
+      moneda: { type: String, default: "PEN", uppercase: true, trim: true },
       // Opciones de seguridad que ajusta cada empresa. Los valores por defecto y los límites
       // viven en auth/pin-config.js (no en el esquema) para validarlos con mensajes claros.
       seguridad: {
