@@ -19,6 +19,8 @@ export function montarRutas(router, { auth, autenticar, requierePermiso, emplead
   router.post("/empresa", m.empresa);
   // Cambiar mi contraseña (también con una contraseña temporal pendiente: ahí está el sentido)
   router.post("/password", m.cambiarPassword);
+  // Preferencias de la persona (hoy: paginaPrincipal, el id del destino que se abre al entrar)
+  router.put("/preferencias", m.preferencias);
 
   // Mi propio PIN (hace falta estar autenticado en una empresa)
   router.put("/pin", autenticar(), m.cambiarMiPin);

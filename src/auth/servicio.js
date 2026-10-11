@@ -6,6 +6,8 @@ import { leerCookie, serializarCookie } from "./cookies.js";
 import { crearLimitador } from "./limitador.js";
 import { crearServicioPin } from "./pin.js";
 import { validarPassword } from "./politica-password.js";
+import { configPinDe } from "./pin-config.js";
+import { validarPaginaPrincipal } from "./preferencias.js";
 
 const MIN = 60_000;
 const HORA = 60 * MIN;
@@ -286,15 +288,45 @@ export function crearServicioAuth(modelos, opciones = {}) {
     const disp = s.dispositivoId
       ? await Dispositivo.findOne({ _id: s.dispositivoId }).setOptions({ sinEmpresa: true }).lean()
       : null;
+
+    // Lo propio de la empresa activa: servicios contratados y estado del PIN de esta persona.
+    // La consulta con tenancy va con `await` dentro de una función async (regla de 5.1).
+    let servicios = [];
+    let pinHabilitado = false;
+    let tienePin = false;
+    if (activa) {
+      const [empresa, miembro] = await Promise.all([
+        Empresa.findById(activa.id).lean(),
+        conEmpresa(activa.id, async () =>
+          await Membresia.findOne({ usuarioId: s.usuarioId, activa: true }).select("+pinHash").lean(),
+        ),
+      ]);
+      servicios = (empresa?.servicios ?? []).filter((x) => x.activa !== false).map((x) => x.codigo);
+      pinHabilitado = empresa ? configPinDe(empresa).habilitado === true : false;
+      tienePin = !!miembro?.pinHash;
+    }
+
     return {
       usuario: { id: String(usuario._id), correo: usuario.correo, nombre: usuario.nombre ?? null },
       empresas: empresas.map(sinPermisos),
       empresaActivaId: activa?.id ?? null,
       permisos: activa?.permisos ?? [],
+      servicios,
+      paginaPrincipal: usuario.paginaPrincipal ?? null,
+      pinHabilitado,
+      tienePin,
       metodo: s.metodo,
       debeCambiarPassword: !!usuario.debeCambiarPassword,
       dispositivo: disp ? { id: String(disp._id), nombre: disp.nombre, estacion: disp.estacion } : null,
     };
+  }
+
+  // Preferencias de la persona (globales, como el resto de su cuenta). Hoy solo `paginaPrincipal`.
+  async function guardarPreferencias({ usuarioId, paginaPrincipal }) {
+    const valor = validarPaginaPrincipal(paginaPrincipal);
+    // $unset para quitarla: así `paginaPrincipal` vuelve a no existir en vez de quedar en null.
+    await Usuario.updateOne({ _id: usuarioId }, valor === null ? { $unset: { paginaPrincipal: 1 } } : { paginaPrincipal: valor });
+    return { paginaPrincipal: valor };
   }
 
   // ---------- Express ----------
@@ -415,6 +447,17 @@ export function crearServicioAuth(modelos, opciones = {}) {
         responderError(res, e, next);
       }
     },
+    async preferencias(req, res, next) {
+      try {
+        // Sin empresa: la preferencia es de la persona. Una contraseña temporal pendiente sí bloquea.
+        const { sesion } = await sesionDe(req, { requiereEmpresa: false });
+        res.status(200).json(
+          await guardarPreferencias({ usuarioId: sesion.usuarioId, paginaPrincipal: req.body?.paginaPrincipal }),
+        );
+      } catch (e) {
+        responderError(res, e, next);
+      }
+    },
     async empresa(req, res, next) {
       try {
         const { token } = await sesionDe(req, { requiereEmpresa: false });
@@ -447,6 +490,7 @@ export function crearServicioAuth(modelos, opciones = {}) {
     cerrarSesionesDe,
     cambiarEmpresa,
     cambiarPassword,
+    guardarPreferencias,
     exigirCsrf,
     autenticar,
     manejadores: { ...manejadores, ...pin.manejadores },

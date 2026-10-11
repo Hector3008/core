@@ -61,7 +61,9 @@ Se guarda el **hash** del token porque, si alguien copiara la colección, no pod
 
 Una persona puede trabajar en varias empresas. La sesión recuerda en cuál. Cambiar de empresa (`POST /auth/empresa`, cuerpo `{ empresaId }`) solo actualiza `empresaActivaId`, y solo se permite si tiene membresía activa allí. Aun así, `requierePermiso` comprueba la membresía en cada petición: la sesión sola nunca da acceso a una empresa.
 
-`GET /auth/yo` devuelve usuario, empresas, empresa activa y los **permisos** de esa empresa: con eso el front sabe qué estaciones mostrar.
+`GET /auth/yo` devuelve usuario, empresas, empresa activa y los **permisos** de esa empresa: con eso el front sabe qué estaciones mostrar. Su forma es el contrato de `cuenta` y la fija `test/yo.test.js`. Campos: `usuario`, `empresas` (sin permisos), `empresaActivaId`, `permisos`, `servicios` (códigos de los servicios contratados y activos de la empresa activa), `paginaPrincipal` (id de destino o `null`), `pinHabilitado` y `tienePin` (de la empresa activa y de la membresía de la persona; nunca el hash), `metodo`, `debeCambiarPassword` y `dispositivo`. Sin empresa activa, `servicios` es `[]` y `pinHabilitado` y `tienePin` son `false`.
+
+**Preferencias** (`PUT /auth/preferencias`, cuerpo `{ paginaPrincipal }`): hoy solo la página principal, el id del destino que el front abre al entrar (por ejemplo `restaurante.pedidos`). Es global de la persona, como el resto de su cuenta. El núcleo valida el **formato** (1 a 3 segmentos en minúsculas, números y `_`, separados por punto; nunca una URL) pero no si el destino existe: eso lo sabe el front. `null` la quita. Pide sesión y `x-requested-with`; una contraseña temporal pendiente la bloquea.
 
 ## 6. Protecciones incluidas
 
