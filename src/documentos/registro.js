@@ -15,9 +15,9 @@ function normalizar(def) {
   } = def ?? {};
 
   if (!esTexto(tipo)) throw new Error("registrarTipo: falta 'tipo'");
-  if (!/^[A-Z0-9]{1,6}$/.test(prefijo ?? ""))
+  if (!/^[A-Z][A-Z0-9_]{0,11}$/.test(prefijo ?? ""))
     throw new Error(
-      `registrarTipo(${tipo}): 'prefijo' va en mayúsculas y números, de 1 a 6 caracteres (ej. "DP")`,
+      `registrarTipo(${tipo}): 'prefijo' empieza con una letra mayúscula y sigue con mayúsculas, números o guion bajo, hasta 12 caracteres (ej. "DP", "DOC_ITEM")`,
     );
   if (!esTexto(estadoInicial))
     throw new Error(`registrarTipo(${tipo}): falta 'estadoInicial'`);

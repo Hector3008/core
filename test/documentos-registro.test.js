@@ -32,6 +32,9 @@ test("deduce estados, finales y editables", () => {
 test("rechaza declaraciones inválidas", () => {
   const r = crearRegistroTipos();
   assert.throws(() => r.registrar({ ...base(), prefijo: "dp" }), /prefijo/);
+  assert.throws(() => r.registrar({ ...base(), prefijo: "1DP" }), /prefijo/);
+  assert.throws(() => r.registrar({ ...base(), prefijo: "A-B" }), /prefijo/);
+  assert.throws(() => r.registrar({ ...base(), prefijo: "ABCDEFGHIJKLM" }), /prefijo/); // 13
   assert.throws(() => r.registrar({ ...base(), estadoInicial: "" }), /estadoInicial/);
   assert.throws(
     () => r.registrar({ ...base(), transiciones: { borrador: "cotizacion" } }),
@@ -59,6 +62,12 @@ test("registrar es idempotente con las mismas reglas y falla con otras", () => {
     () => r.registrar({ ...base(), transiciones: { borrador: ["x"] } }),
     /otras reglas/,
   );
+});
+
+test("el prefijo admite nombres largos con guion bajo (hasta 12)", () => {
+  const r = crearRegistroTipos();
+  assert.doesNotThrow(() => r.registrar({ ...base(), tipo: "doc_item", prefijo: "DOC_ITEM" }));
+  assert.doesNotThrow(() => r.registrar({ ...base(), tipo: "largo", prefijo: "ABCDEFGHIJKL" })); // 12
 });
 
 test("el prefijo no se puede repetir entre tipos", () => {
