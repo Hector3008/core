@@ -30,7 +30,7 @@ const MAX_HISTORIAL = 100;
  *   cliente:editar    → corregir la ficha
  *   cliente:gestionar → baja, reactivar, consentimientos y anonimizar
  */
-export function crearServicioClientes({ Empresa, Cliente }, auth) {
+export function crearServicioClientes({ Empresa, Cliente, SesionCliente }, auth) {
   // ---------- ayudas ----------
   const exigir = (actor, permiso) => {
     if (!actor || !Array.isArray(actor.permisos))
@@ -52,6 +52,11 @@ export function crearServicioClientes({ Empresa, Cliente }, auth) {
     if (!c) throw new ErrorCliente("NO_ENCONTRADO", "cliente no encontrado");
     return c;
   }
+
+  // Baja y anonimización cierran las sesiones de la cuenta del cliente (si tuviera). Las sesiones también se
+  // comprueban al usarlas (cuentas/index.js), esto solo las limpia.
+  const cerrarSesionesCuenta = (empresaId, clienteId) =>
+    conEmpresa(empresaId, async () => await SesionCliente.deleteMany({ clienteId }));
 
   const limpiarRedes = (redes) =>
     Object.fromEntries(Object.entries(redes ?? {}).filter(([, v]) => typeof v === "string" && v));
@@ -82,6 +87,7 @@ export function crearServicioClientes({ Empresa, Cliente }, auth) {
       direccion: c.direccion ?? null,
       preferencias: c.preferencias ?? {},
       consentimientos: consentimientosDto(c),
+      tieneCuenta: !!c.cuenta,
       activo: c.activo !== false,
       anonimizado: !!c.anonimizadoTs,
       creadoTs: c.createdAt ?? null,
@@ -226,6 +232,7 @@ export function crearServicioClientes({ Empresa, Cliente }, auth) {
     await conEmpresa(empresaId, async () =>
       await Cliente.updateOne({ _id: clienteId, activo: true }, { activo: false, desactivadoTs: new Date() }),
     );
+    await cerrarSesionesCuenta(empresaId, clienteId);
     return obtener({ empresaId, clienteId });
   }
 
@@ -330,6 +337,7 @@ export function crearServicioClientes({ Empresa, Cliente }, auth) {
       activo: false,
       desactivadoTs: c.desactivadoTs ?? ts,
       anonimizadoTs: ts,
+      cuenta: null, // sin cuenta: ya no puede entrar
     };
     for (const r of retiros)
       $set[`consentimientos.${r.finalidad}`] = { otorgado: false, ts, medio: r.medio, registradoPor };
@@ -337,6 +345,7 @@ export function crearServicioClientes({ Empresa, Cliente }, auth) {
     if (retiros.length) upd.$push = { historialConsentimientos: { $each: retiros, $slice: -MAX_HISTORIAL } };
     const r = await conEmpresa(empresaId, async () => await Cliente.updateOne({ _id: clienteId, anonimizadoTs: null }, upd));
     if (!r.matchedCount) throw new ErrorCliente("ESTADO_INVALIDO", "el cliente ya está anonimizado");
+    await cerrarSesionesCuenta(empresaId, clienteId);
     return obtener({ empresaId, clienteId });
   }
 

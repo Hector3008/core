@@ -32,6 +32,11 @@ export const empresaSchema = marcarGlobal(
           codigoVigenciaMin: Number,
         },
       },
+      // Reglas de puntos de la empresa (ver fidelizacion/config.js). Sin tocar: habilitada, 1 punto por unidad.
+      fidelizacion: {
+        habilitada: Boolean,
+        puntosPorUnidad: Number,
+      },
       servicios: [
         {
           _id: false,

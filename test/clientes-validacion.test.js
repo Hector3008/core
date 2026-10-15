@@ -155,4 +155,25 @@ describe("rutas de clientes", () => {
       ["cliente:crear", "cliente:editar", "cliente:gestionar", "cliente:leer"],
     );
   });
+
+  it("con cuentas y puntos suma 4 rutas, cada una con su permiso", () => {
+    const rutas = [];
+    const reg = (metodo) => (path, ...fns) => rutas.push({ metodo, path, n: fns.length });
+    const router = { get: reg("get"), post: reg("post"), put: reg("put"), delete: reg("delete") };
+    const pedidos = [];
+    const h = new Proxy({}, { get: () => () => {} });
+    montarRutasClientes(router, {
+      clientes: { manejadores: h },
+      cuentasCliente: { manejadoresPersonal: h },
+      fidelizacion: { manejadores: h },
+      autenticar: () => () => {},
+      requierePermiso: (p) => (pedidos.push(p), () => {}),
+    });
+    assert.equal(rutas.length, 12);
+    assert.ok(rutas.every((r) => r.n === 3));
+    for (const p of ["/:clienteId/cuenta", "/:clienteId/cuenta/password", "/:clienteId/puntos", "/:clienteId/puntos/canjear"])
+      assert.ok(rutas.some((r) => r.path === p), p);
+    assert.ok(pedidos.includes("cliente:cuenta"));
+    assert.ok(pedidos.includes("fidelizacion:canjear"));
+  });
 });

@@ -25,6 +25,20 @@ const historialSchema = new mongoose.Schema(
   { _id: false },
 );
 
+// La cuenta propia del cliente final (arquitectura 5.25): usuario = su correo o su teléfono (los de la ficha).
+// Vive en la ficha de cada empresa; no es un Usuario global ni comparte sesión con el personal.
+// El hash no sale en ninguna consulta si no se pide con `.select("+cuenta.passwordHash")`.
+const cuentaSchema = new mongoose.Schema(
+  {
+    passwordHash: { type: String, select: false, required: true },
+    debeCambiarPassword: { type: Boolean, default: false }, // contraseña temporal dada por el personal
+    origen: { type: String, enum: ["personal", "autoregistro"], required: true },
+    creadaTs: { type: Date, required: true },
+    ultimoAccesoTs: { type: Date, default: null },
+  },
+  { _id: false },
+);
+
 const identificacionSchema = new mongoose.Schema(
   { tipo: { type: String, required: true }, numero: { type: String, required: true } },
   { _id: false },
@@ -46,6 +60,7 @@ export const clienteSchema = new mongoose.Schema(
     identificacion: { type: identificacionSchema, default: null }, // { tipo: "RUC", numero }
     direccion: { type: String, default: null },
     preferencias: { type: mongoose.Schema.Types.Mixed, default: {} }, // se copia al documento al crearlo
+    cuenta: { type: cuentaSchema, default: null },
     consentimientos,
     historialConsentimientos: { type: [historialSchema], default: [] }, // últimos 100 cambios
     activo: { type: Boolean, default: true },

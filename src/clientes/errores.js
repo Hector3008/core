@@ -3,12 +3,14 @@
 //   PERMISO_INSUFICIENTE 403
 //   NO_ENCONTRADO 404
 //   CLIENTE_DUPLICADO 409 (trae `detalle: { campo, clienteId }`)   ESTADO_INVALIDO 409
+//   REGISTRO_BLOQUEADO 409 (auto-registro de un cliente que ya tiene ficha: no revela de quién)
 const STATUS = {
   DATOS_INVALIDOS: 400,
   PERMISO_INSUFICIENTE: 403,
   NO_ENCONTRADO: 404,
   CLIENTE_DUPLICADO: 409,
   ESTADO_INVALIDO: 409,
+  REGISTRO_BLOQUEADO: 409,
 };
 
 export class ErrorCliente extends Error {

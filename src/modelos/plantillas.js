@@ -13,6 +13,8 @@ export const PLANTILLAS = {
       "catalogo:leer",
       "cliente:leer",
       "cliente:crear",
+      "cliente:cuenta",
+      "fidelizacion:canjear",
     ],
     cocina: ["estacion:cocina", "documento:leer", "documento:editar"],
     delivery: [
