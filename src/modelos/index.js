@@ -13,7 +13,7 @@ import { dispositivoSchema, codigoSchema } from "../auth/modelos-pin.js";
 import { clienteSchema } from "../clientes/modelo.js";
 import { itemSchema } from "../catalogo/modelo.js";
 import { sesionClienteSchema } from "../cuentas/modelo.js";
-import { movimientoPuntosSchema } from "../fidelizacion/modelo.js";
+import { movimientoPuntosSchema, beneficioSchema, ticketSchema, retoSchema } from "../fidelizacion/modelo.js";
 
 // core.model(nombre, schema, coleccion?) ya existe en la pieza 1
 export function registrarModelos(core) {
@@ -37,5 +37,8 @@ export function registrarModelos(core) {
     Item: core.model("Item", itemSchema, "catalogo_items"),
     SesionCliente: core.model("SesionCliente", sesionClienteSchema, "sesiones_cliente"),
     MovimientoPuntos: core.model("MovimientoPuntos", movimientoPuntosSchema, "puntos_movimientos"),
+    Beneficio: core.model("Beneficio", beneficioSchema, "beneficios"),
+    Ticket: core.model("Ticket", ticketSchema, "tickets"),
+    Reto: core.model("Reto", retoSchema, "retos"),
   };
 }

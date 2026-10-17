@@ -156,7 +156,7 @@ describe("rutas de clientes", () => {
     );
   });
 
-  it("con cuentas y puntos suma 4 rutas, cada una con su permiso", () => {
+  it("con cuentas, puntos y vales suma 22 rutas, cada una con su permiso", () => {
     const rutas = [];
     const reg = (metodo) => (path, ...fns) => rutas.push({ metodo, path, n: fns.length });
     const router = { get: reg("get"), post: reg("post"), put: reg("put"), delete: reg("delete") };
@@ -169,11 +169,19 @@ describe("rutas de clientes", () => {
       autenticar: () => () => {},
       requierePermiso: (p) => (pedidos.push(p), () => {}),
     });
-    assert.equal(rutas.length, 12);
+    assert.equal(rutas.length, 22);
     assert.ok(rutas.every((r) => r.n === 3));
-    for (const p of ["/:clienteId/cuenta", "/:clienteId/cuenta/password", "/:clienteId/puntos", "/:clienteId/puntos/canjear"])
+    for (const p of [
+      "/:clienteId/cuenta", "/:clienteId/cuenta/password", "/:clienteId/puntos", "/:clienteId/puntos/canjear",
+      "/:clienteId/tickets", "/beneficios", "/beneficios/:beneficioId", "/retos", "/retos/:retoId", "/fidelizacion/config", "/tickets/:codigo",
+    ])
       assert.ok(rutas.some((r) => r.path === p), p);
     assert.ok(pedidos.includes("cliente:cuenta"));
     assert.ok(pedidos.includes("fidelizacion:canjear"));
+    assert.ok(pedidos.includes("fidelizacion:gestionar"));
+    // Las rutas fijas van antes de `/:clienteId`: si no, «beneficios» o «tickets» se tomarían por un id.
+    const idx = (m, p) => rutas.findIndex((r) => r.metodo === m && r.path === p);
+    for (const [m, p] of [["get", "/beneficios"], ["get", "/retos"], ["get", "/fidelizacion/config"], ["get", "/tickets/:codigo"]])
+      assert.ok(idx(m, p) < idx("get", "/:clienteId"), p);
   });
 });

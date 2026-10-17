@@ -152,11 +152,11 @@ describe("reglas de puntos (config.js)", () => {
   });
 
   it("configDe: lo guardado sobre los valores por defecto (empresas anteriores al campo)", () => {
-    assert.deepEqual(configDe({}), { habilitada: true, puntosPorUnidad: 1 });
-    assert.deepEqual(configDe(null), { habilitada: true, puntosPorUnidad: 1 });
-    assert.deepEqual(configDe({ fidelizacion: { habilitada: false } }), { habilitada: false, puntosPorUnidad: 1 });
-    assert.deepEqual(configDe({ fidelizacion: { puntosPorUnidad: 2 } }), { habilitada: true, puntosPorUnidad: 2 });
-    assert.deepEqual(configDe({ fidelizacion: { puntosPorUnidad: -3 } }), { habilitada: true, puntosPorUnidad: 1 });
+    assert.deepEqual(configDe({}), { habilitada: true, puntosPorUnidad: 1, niveles: [] });
+    assert.deepEqual(configDe(null), { habilitada: true, puntosPorUnidad: 1, niveles: [] });
+    assert.deepEqual(configDe({ fidelizacion: { habilitada: false } }), { habilitada: false, puntosPorUnidad: 1, niveles: [] });
+    assert.deepEqual(configDe({ fidelizacion: { puntosPorUnidad: 2 } }), { habilitada: true, puntosPorUnidad: 2, niveles: [] });
+    assert.deepEqual(configDe({ fidelizacion: { puntosPorUnidad: -3 } }), { habilitada: true, puntosPorUnidad: 1, niveles: [] });
   });
 
   it("validarConfig: parcial, tipos y rangos, y campos desconocidos se rechazan", () => {
@@ -423,6 +423,11 @@ describe("canjear y ajustar", () => {
     assert.equal(r.movimientos.length, 3);
     assert.deepEqual(r.movimientos.map((x) => x.tipo).sort(), ["acumulo", "ajuste", "canje"]);
     assert.ok(r.movimientos.every((x) => !("creadoPor" in x) && !("clienteId" in x)), "el resumen no expone ids internos");
+    // 5.30: nivel e insignias salen del mismo libro; el ajuste de 100 y el canje no cuentan como puntos acumulados
+    assert.equal(r.logros.acumulado, 10);
+    assert.equal(r.logros.canjes, 1);
+    assert.equal(r.logros.nivel, null); // la empresa no configuró niveles
+    assert.equal(r.logros.insignias.find((i) => i.id === "primera_vez").obtenida, true);
   });
 
   it("el saldo de otro cliente no se mezcla", async () => {
@@ -434,14 +439,14 @@ describe("configuración de la empresa", () => {
   it("leer da los valores por defecto; guardar exige gestionar y valida", async () => {
     const m = crearMundo();
     const cfg = (a) => conEmpresa(E1, () => m.servicio.guardarConfig({ empresaId: E1, actor: a, ...a.cambio }));
-    assert.deepEqual(await m.servicio.leerConfig({ empresaId: E1 }), { habilitada: true, puntosPorUnidad: 1 });
+    assert.deepEqual(await m.servicio.leerConfig({ empresaId: E1 }), { habilitada: true, puntosPorUnidad: 1, niveles: [] });
     await rechaza(m.servicio.guardarConfig({ empresaId: E1, actor: MESERO, puntosPorUnidad: 2 }), "PERMISO_INSUFICIENTE", 403);
     await rechaza(m.servicio.guardarConfig({ empresaId: E1, actor: ADM, puntosPorUnidad: 0 }), "DATOS_INVALIDOS");
     const r = await m.servicio.guardarConfig({ empresaId: E1, actor: ADM, puntosPorUnidad: 2 });
-    assert.deepEqual(r, { habilitada: true, puntosPorUnidad: 2 });
+    assert.deepEqual(r, { habilitada: true, puntosPorUnidad: 2, niveles: [] });
     m.pedido("PD-0000001", { total: 10 });
     assert.equal((await acumular(m, "PD-0000001")).acumulados, 20);
-    assert.deepEqual(await m.servicio.guardarConfig({ empresaId: E1, actor: ADM, habilitada: false }), { habilitada: false, puntosPorUnidad: 2 });
+    assert.deepEqual(await m.servicio.guardarConfig({ empresaId: E1, actor: ADM, habilitada: false }), { habilitada: false, puntosPorUnidad: 2, niveles: [] });
     void cfg;
   });
 

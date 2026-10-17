@@ -36,6 +36,8 @@ export const empresaSchema = marcarGlobal(
       fidelizacion: {
         habilitada: Boolean,
         puntosPorUnidad: Number,
+        // Niveles por puntos acumulados (5.30): de menor a mayor
+        niveles: [{ _id: false, nombre: String, desde: Number }],
       },
       servicios: [
         {
