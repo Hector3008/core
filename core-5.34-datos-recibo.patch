@@ -1,0 +1,369 @@
+diff --git a/docs/autenticacion.md b/docs/autenticacion.md
+index f81a0d6..ec7fa25 100644
+--- a/docs/autenticacion.md
++++ b/docs/autenticacion.md
+@@ -169,6 +169,7 @@ Los cambios solo afectan a lo que se haga después (un PIN ya guardado con 4 dí
+ |---|---|---|
+ | `GET` / `PUT /seguridad` | Administración | `empresa:seguridad` |
+ | `GET` / `PUT /marca` | Administración | `empresa:marca` |
++| `GET` / `PUT /datos-empresa` | Administración | `empresa:datos` |
+ | `POST /dispositivos/codigo` · `GET /dispositivos` · `DELETE /dispositivos/:id` | Administración | `dispositivo:gestionar` |
+ | `GET /usuarios` · `PUT` / `DELETE /usuarios/:usuarioId/pin` | Administración | `usuario:gestionar` |
+ | `PUT /pin` | La propia persona | sesión iniciada |
+@@ -200,3 +201,20 @@ Logo, eslogan y colores que la empresa muestra en su carta pública. Se guardan
+ - **Con colores propios la carta no sigue el modo oscuro del dispositivo**: el fondo lo decide la empresa (por defecto, el claro de siempre). Sin colores, la carta sigue como antes.
+ - `marcaPublica(empresa)` (exportada por el núcleo) es lo que deben usar los servicios para dar la marca al público: `{ logo, eslogan, tema, colores }` o `null` si la empresa no personalizó nada. Nunca lanza error: una marca guardada que ya no sirve (por ejemplo, editada a mano en la base) se ignora y no rompe la carta.
+ - La validación y la paleta están en `src/marca.js` (lógica pura); el guardado y las rutas, en `src/auth/marca.js`.
++
++## 14. Datos de la empresa para sus comprobantes (5.34)
++
++Razón social, RUC (o identificación fiscal), dirección, teléfono y un pie de página que salen impresos en los recibos. Se guardan en `Empresa.datos` y se editan con `GET` / `PUT /auth/datos-empresa` (permiso `empresa:datos`; el rol `admin` con `*` ya lo tiene). Igual que la marca, va en `/auth`: el gateway no monta nada nuevo.
++
++| Campo | Regla |
++|---|---|
++| `razonSocial` | Hasta 80 caracteres. |
++| `idFiscal` | De 5 a 20 caracteres: letras, números, `.`, `-` o `/`, sin espacios. Se guarda en mayúsculas. **No se verifica contra ninguna autoridad.** |
++| `direccion` | Hasta 120 caracteres. |
++| `telefono` | Hasta 30 caracteres: números, espacios y `+ - ( )`. |
++| `pie` | Hasta 120 caracteres, una línea. |
++
++- `PUT` recibe los campos a cambiar; `null` o texto vacío quita el campo. Un campo desconocido o un cuerpo vacío dan 400. Los espacios repetidos y los saltos de línea se vuelven un solo espacio. Responde `{ datos, vista }`: lo guardado y el encabezado tal como se imprime.
++- `emisorDe(empresa)` (exportada por el núcleo) es lo que deben usar los servicios para armar el encabezado de un comprobante: `{ nombre, razonSocial, idFiscal, etiquetaIdFiscal, direccion, telefono, pie, logo }`. El logo es el de la marca (5.33) si es una dirección https segura. La etiqueta del identificador es «RUC» para Perú (o sin país) y «ID fiscal» para los demás países. Nunca lanza error: un dato guardado a mano y mal formado se ignora.
++- Estos datos **no hacen fiscal** un recibo: son texto que la empresa escribe para que salga impreso.
++- La validación está en `src/datos-empresa.js` (lógica pura); el guardado y las rutas, en `src/auth/datos.js`.
+diff --git a/src/auth/datos.js b/src/auth/datos.js
+new file mode 100644
+index 0000000..2af5a14
+--- /dev/null
++++ b/src/auth/datos.js
+@@ -0,0 +1,49 @@
++import { ErrorAuth } from "./errores.js";
++import { CAMPOS_DATOS, datosDe, emisorDe, validarDatos } from "../datos-empresa.js";
++
++// Datos de la empresa para sus comprobantes (5.34): leerlos y cambiarlos desde la administración.
++// Mismo patrón que la marca (./marca.js): rutas en `/auth`, sin obligar al gateway a montar nada nuevo.
++
++export function crearServicioDatos({ Empresa }, { responderError, exigirCsrf }) {
++  async function empresaOrError(empresaId) {
++    const e = await Empresa.findById(empresaId).lean();
++    if (!e || e.activa === false) throw new ErrorAuth("NO_ENCONTRADO", "empresa no encontrada");
++    return e;
++  }
++
++  const respuesta = (empresa) => ({ datos: datosDe(empresa), vista: emisorDe(empresa) });
++
++  /** `datos`: lo guardado (cada campo o null); `vista`: cómo se imprime en un recibo (con el nombre y el logo). */
++  async function leerDatos({ empresaId }) {
++    return respuesta(await empresaOrError(empresaId));
++  }
++
++  async function guardarDatos({ empresaId, cambios }) {
++    const empresa = await empresaOrError(empresaId);
++    const nuevos = validarDatos(cambios, datosDe(empresa));
++    const set = {};
++    const unset = {};
++    for (const c of CAMPOS_DATOS) (nuevos[c] === null ? unset : set)[`datos.${c}`] = nuevos[c] === null ? "" : nuevos[c];
++    await Empresa.updateOne({ _id: empresaId }, { ...(Object.keys(set).length ? { $set: set } : {}), ...(Object.keys(unset).length ? { $unset: unset } : {}) });
++    return leerDatos({ empresaId });
++  }
++
++  const envolver = (fn) => async (req, res, next) => {
++    try {
++      await fn(req, res);
++    } catch (e) {
++      responderError(res, e, next);
++    }
++  };
++
++  return {
++    api: { leerDatos, guardarDatos },
++    manejadores: {
++      leerDatos: envolver(async (req, res) => res.status(200).json(await leerDatos({ empresaId: req.auth.empresaId }))),
++      guardarDatos: envolver(async (req, res) => {
++        exigirCsrf(req);
++        res.status(200).json(await guardarDatos({ empresaId: req.auth.empresaId, cambios: req.body }));
++      }),
++    },
++  };
++}
+diff --git a/src/auth/rutas.js b/src/auth/rutas.js
+index 760f710..826e62b 100644
+--- a/src/auth/rutas.js
++++ b/src/auth/rutas.js
+@@ -31,6 +31,9 @@ export function montarRutas(router, { auth, autenticar, requierePermiso, emplead
+   // Marca de la empresa (5.33): logo, eslogan y colores de la carta pública
+   router.get("/marca", ...con("empresa:marca"), m.leerMarca);
+   router.put("/marca", ...con("empresa:marca"), m.guardarMarca);
++  // Datos de la empresa para sus comprobantes (5.34): razón social, RUC, dirección, teléfono y pie
++  router.get("/datos-empresa", ...con("empresa:datos"), m.leerDatos);
++  router.put("/datos-empresa", ...con("empresa:datos"), m.guardarDatos);
+   router.post("/dispositivos/codigo", ...con("dispositivo:gestionar"), m.crearCodigo);
+   router.get("/dispositivos", ...con("dispositivo:gestionar"), m.listarDispositivos);
+   router.delete("/dispositivos/:id", ...con("dispositivo:gestionar"), m.revocarDispositivo);
+diff --git a/src/auth/servicio.js b/src/auth/servicio.js
+index d31fcde..67f63e5 100644
+--- a/src/auth/servicio.js
++++ b/src/auth/servicio.js
+@@ -6,6 +6,7 @@ import { leerCookie, serializarCookie } from "./cookies.js";
+ import { crearLimitador } from "./limitador.js";
+ import { crearServicioPin } from "./pin.js";
+ import { crearServicioMarca } from "./marca.js";
++import { crearServicioDatos } from "./datos.js";
+ import { validarPassword } from "./politica-password.js";
+ import { configPinDe } from "./pin-config.js";
+ import { validarPaginaPrincipal } from "./preferencias.js";
+@@ -483,10 +484,12 @@ export function crearServicioAuth(modelos, opciones = {}) {
+   });
+ 
+   const marca = crearServicioMarca(modelos, { responderError, exigirCsrf });
++  const datosEmpresa = crearServicioDatos(modelos, { responderError, exigirCsrf });
+ 
+   return {
+     ...pin.api,
+     ...marca.api,
++    ...datosEmpresa.api,
+     login,
+     crearSesion,
+     obtenerSesion,
+@@ -497,7 +500,7 @@ export function crearServicioAuth(modelos, opciones = {}) {
+     guardarPreferencias,
+     exigirCsrf,
+     autenticar,
+-    manejadores: { ...manejadores, ...pin.manejadores, ...marca.manejadores },
++    manejadores: { ...manejadores, ...pin.manejadores, ...marca.manejadores, ...datosEmpresa.manejadores },
+     listo: () =>
+       Promise.all([Sesion.init(), Dispositivo.init(), CodigoEmparejamiento.init()]).then(() => undefined),
+   };
+diff --git a/src/datos-empresa.js b/src/datos-empresa.js
+new file mode 100644
+index 0000000..fc2b0d5
+--- /dev/null
++++ b/src/datos-empresa.js
+@@ -0,0 +1,78 @@
++import { ErrorAuth } from "./auth/errores.js";
++import { marcaDe, urlLogoSegura } from "./marca.js";
++
++// Datos de la empresa para sus comprobantes (arquitectura 5.34): razón social, identificación fiscal (RUC),
++// dirección, teléfono y un pie de página. Lógica pura, sin base de datos. Son datos que la empresa escribe para
++// que salgan impresos: no se verifican contra ninguna autoridad ni hacen del recibo un comprobante fiscal.
++
++export const CAMPOS_DATOS = ["razonSocial", "idFiscal", "direccion", "telefono", "pie"];
++export const LIMITES_DATOS = { razonSocial: 80, idFiscal: 20, direccion: 120, telefono: 30, pie: 120 };
++const ETIQUETAS = {
++  razonSocial: "razonSocial: el nombre legal de la empresa",
++  idFiscal: "idFiscal: el RUC o la identificación fiscal (letras, números, punto, guion o barra)",
++  direccion: "direccion: la dirección del local",
++  telefono: "telefono: números, espacios y + - ( )",
++  pie: "pie: una línea al final del recibo",
++};
++
++const malo = (m) => new ErrorAuth("DATOS_INVALIDOS", m);
++// eslint-disable-next-line no-control-regex
++const CONTROL = /[\u0000-\u001f\u007f]/;
++
++function normalizar(campo, valor) {
++  if (typeof valor !== "string") throw malo(ETIQUETAS[campo]);
++  const t = valor.trim().replace(/\s+/g, " ");
++  if (CONTROL.test(t) || t.length > LIMITES_DATOS[campo]) throw malo(`${campo}: hasta ${LIMITES_DATOS[campo]} caracteres y sin caracteres de control`);
++  if (campo === "idFiscal" && (t.length < 5 || !/^[A-Za-z0-9][A-Za-z0-9./-]*$/.test(t))) throw malo(ETIQUETAS.idFiscal + ", de 5 a 20 caracteres");
++  if (campo === "telefono" && !/^[0-9+][0-9 ()+-]*$/.test(t)) throw malo(ETIQUETAS.telefono);
++  return campo === "idFiscal" ? t.toUpperCase() : t;
++}
++
++/** Los datos guardados, con todos los campos (los vacíos o mal guardados en null). */
++export function datosDe(empresa) {
++  const d = empresa?.datos ?? {};
++  return Object.fromEntries(
++    CAMPOS_DATOS.map((c) => {
++      if (typeof d[c] !== "string" || !d[c]) return [c, null];
++      try {
++        return [c, normalizar(c, d[c])];
++      } catch {
++        return [c, null]; // un valor guardado a mano y mal formado se ignora
++      }
++    }),
++  );
++}
++
++/**
++ * Valida los cambios pedidos (parciales) sobre los datos `actual`. Un campo en `null` o vacío se quita.
++ * Devuelve los datos completos resultantes; lanza ErrorAuth si algo es inválido.
++ */
++export function validarDatos(entrada, actual = datosDe(null)) {
++  if (!entrada || typeof entrada !== "object" || Array.isArray(entrada)) throw malo("se esperaba un objeto con los cambios de los datos");
++  const extra = Object.keys(entrada).filter((k) => !CAMPOS_DATOS.includes(k));
++  if (extra.length) throw malo(`campos no admitidos (${extra.join(", ")})`);
++  if (!Object.keys(entrada).length) throw malo("no hay nada que cambiar");
++  const nuevos = { ...datosDe({ datos: actual }) };
++  for (const [k, v] of Object.entries(entrada)) nuevos[k] = v === null || (typeof v === "string" && !v.trim()) ? null : normalizar(k, v);
++  return nuevos;
++}
++
++/**
++ * Lo que sale en el encabezado de un recibo o una cuenta: nombre, datos y logo de la empresa en este momento.
++ * Nunca lanza error. La etiqueta de la identificación fiscal ("RUC" o "ID fiscal") depende del país de la empresa.
++ */
++export function emisorDe(empresa) {
++  const d = datosDe(empresa);
++  const logo = marcaDe(empresa).logo;
++  const pais = typeof empresa?.pais === "string" && empresa.pais ? empresa.pais.toUpperCase() : "PE";
++  return {
++    nombre: typeof empresa?.nombre === "string" ? empresa.nombre : "",
++    razonSocial: d.razonSocial,
++    idFiscal: d.idFiscal,
++    etiquetaIdFiscal: pais === "PE" ? "RUC" : "ID fiscal",
++    direccion: d.direccion,
++    telefono: d.telefono,
++    pie: d.pie,
++    logo: logo ? urlLogoSegura(logo) : null,
++  };
++}
+diff --git a/src/index.js b/src/index.js
+index 77c1b7d..e9abcec 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -31,6 +31,7 @@ export { ErrorCatalogo } from "./catalogo/errores.js";
+ export { ErrorFidelizacion } from "./fidelizacion/errores.js";
+ export { calcularDescuento } from "./fidelizacion/beneficios.js";
+ export { marcaPublica } from "./marca.js";
++export { emisorDe } from "./datos-empresa.js";
+ export { hashPassword, verificarPassword } from "./password.js";
+ 
+ // readyState de Mongoose: 0 desconectado, 1 conectado, 2 conectando, 3 desconectando
+diff --git a/src/modelos/empresa.js b/src/modelos/empresa.js
+index c29f186..62d5905 100644
+--- a/src/modelos/empresa.js
++++ b/src/modelos/empresa.js
+@@ -48,6 +48,14 @@ export const empresaSchema = marcarGlobal(
+         colorSecundario: String,
+         colorFondo: String,
+       },
++      // Datos que salen impresos en los comprobantes (5.34). Validación en datos-empresa.js.
++      datos: {
++        razonSocial: String,
++        idFiscal: String,
++        direccion: String,
++        telefono: String,
++        pie: String,
++      },
+       servicios: [
+         {
+           _id: false,
+diff --git a/test/datos-empresa.test.js b/test/datos-empresa.test.js
+new file mode 100644
+index 0000000..0737189
+--- /dev/null
++++ b/test/datos-empresa.test.js
+@@ -0,0 +1,112 @@
++import { describe, it } from "node:test";
++import assert from "node:assert/strict";
++import { ErrorAuth } from "../src/auth/errores.js";
++import { crearServicioDatos } from "../src/auth/datos.js";
++import { datosDe, emisorDe, validarDatos } from "../src/datos-empresa.js";
++
++const malo = (fn, re) => assert.throws(fn, (e) => e instanceof ErrorAuth && e.codigo === "DATOS_INVALIDOS" && (!re || re.test(e.message)));
++const VACIOS = { razonSocial: null, idFiscal: null, direccion: null, telefono: null, pie: null };
++
++describe("validarDatos", () => {
++  it("normaliza espacios, pone el RUC en mayúsculas y devuelve todos los campos", () => {
++    const d = validarDatos({ razonSocial: "  Café   Central S.A.C. ", idFiscal: "20123456789", direccion: " Av. Siempre Viva 123 ", telefono: "+51 987 654 321", pie: "Gracias por tu visita" });
++    assert.deepEqual(d, { razonSocial: "Café Central S.A.C.", idFiscal: "20123456789", direccion: "Av. Siempre Viva 123", telefono: "+51 987 654 321", pie: "Gracias por tu visita" });
++    assert.equal(validarDatos({ idFiscal: "ab-1234.5/6" }).idFiscal, "AB-1234.5/6");
++  });
++  it("superpone sobre lo guardado y quita con null o vacío", () => {
++    const actual = validarDatos({ direccion: "Calle 1", pie: "Hola" });
++    assert.deepEqual(validarDatos({ pie: null, direccion: "  " }, actual), VACIOS);
++    assert.equal(validarDatos({ telefono: "999 111 222" }, actual).direccion, "Calle 1");
++  });
++  it("rechaza lo que no es un objeto, campos desconocidos, cuerpo vacío y valores mal formados", () => {
++    for (const v of [null, "x", [], 3]) malo(() => validarDatos(v), /objeto/);
++    malo(() => validarDatos({ web: "x" }), /no admitidos \(web\)/);
++    malo(() => validarDatos({}), /nada que cambiar/);
++    malo(() => validarDatos({ razonSocial: 5 }), /razonSocial/);
++    malo(() => validarDatos({ razonSocial: "a".repeat(81) }), /razonSocial/);
++    malo(() => validarDatos({ idFiscal: "123" }), /idFiscal/);
++    malo(() => validarDatos({ idFiscal: "12 345 678" }), /idFiscal/);
++    malo(() => validarDatos({ idFiscal: "a".repeat(21) }), /idFiscal/);
++    malo(() => validarDatos({ telefono: "llamar al 999" }), /telefono/);
++    malo(() => validarDatos({ pie: "uno\u0007dos" }), /pie/);
++    malo(() => validarDatos({ direccion: "d".repeat(121) }), /direccion/);
++  });
++  it("los saltos de línea se vuelven espacios", () => {
++    assert.equal(validarDatos({ pie: "uno\ndos" }).pie, "uno dos");
++  });
++});
++
++describe("datosDe y emisorDe", () => {
++  it("una empresa sin datos devuelve todo en null y un valor guardado mal formado se ignora", () => {
++    assert.deepEqual(datosDe(null), VACIOS);
++    assert.deepEqual(datosDe({ datos: { idFiscal: "1", telefono: "x", pie: 5, direccion: "Calle 1" } }), { ...VACIOS, direccion: "Calle 1" });
++  });
++  it("el emisor junta nombre, datos y logo, con la etiqueta fiscal según el país", () => {
++    const e = { nombre: "Café Central", pais: "pe", datos: { razonSocial: "Café Central SAC", idFiscal: "20123456789", pie: "Gracias" }, marca: { logo: "https://e.com/l.png" } };
++    assert.deepEqual(emisorDe(e), { nombre: "Café Central", razonSocial: "Café Central SAC", idFiscal: "20123456789", etiquetaIdFiscal: "RUC", direccion: null, telefono: null, pie: "Gracias", logo: "https://e.com/l.png" });
++    assert.equal(emisorDe({ ...e, pais: "AR" }).etiquetaIdFiscal, "ID fiscal");
++    assert.equal(emisorDe({ nombre: "X" }).etiquetaIdFiscal, "RUC"); // sin país se asume PE
++  });
++  it("un logo que no es https no sale, y nunca lanza", () => {
++    assert.equal(emisorDe({ nombre: "X", marca: { logo: "javascript:alert(1)" } }).logo, null);
++    assert.deepEqual(emisorDe(null).nombre, "");
++  });
++});
++
++describe("datos de la empresa (servicio y manejadores)", () => {
++  function montar(inicial) {
++    const e = { _id: "E1", activa: true, nombre: "Café Central", ...inicial };
++    const Empresa = {
++      findById: (id) => ({ lean: async () => (id === e._id ? structuredClone(e) : null) }),
++      updateOne: async (f, c) => {
++        e.datos ??= {};
++        for (const [k, v] of Object.entries(c.$set ?? {})) e.datos[k.replace("datos.", "")] = v;
++        for (const k of Object.keys(c.$unset ?? {})) delete e.datos[k.replace("datos.", "")];
++      },
++    };
++    const base = {
++      responderError: (res, err, next) => (err instanceof ErrorAuth ? res.status(err.status).json({ error: err.message, codigo: err.codigo }) : next(err)),
++      exigirCsrf: (req) => {
++        if (!req.headers?.["x-requested-with"]) throw new ErrorAuth("CSRF", "falta x-requested-with");
++      },
++    };
++    return { svc: crearServicioDatos({ Empresa }, base), e };
++  }
++  const res = () => {
++    const r = { codigo: null, cuerpo: null, status(c) { r.codigo = c; return r; }, json(b) { r.cuerpo = b; return r; } };
++    return r;
++  };
++
++  it("guarda, quita y devuelve lo guardado y la vista del recibo", async () => {
++    const { svc, e } = montar({});
++    let r = await svc.api.guardarDatos({ empresaId: "E1", cambios: { idFiscal: "20123456789", pie: "Gracias" } });
++    assert.equal(r.datos.idFiscal, "20123456789");
++    assert.equal(r.vista.nombre, "Café Central");
++    assert.equal(r.vista.etiquetaIdFiscal, "RUC");
++    r = await svc.api.guardarDatos({ empresaId: "E1", cambios: { pie: null } });
++    assert.deepEqual(e.datos, { idFiscal: "20123456789" });
++    assert.equal(r.datos.pie, null);
++  });
++  it("un cambio inválido no guarda nada, y una empresa inexistente da NO_ENCONTRADO", async () => {
++    const { svc, e } = montar({ datos: { pie: "Antes" } });
++    await assert.rejects(() => svc.api.guardarDatos({ empresaId: "E1", cambios: { pie: "Nuevo", idFiscal: "1" } }), (err) => err.codigo === "DATOS_INVALIDOS");
++    assert.deepEqual(e.datos, { pie: "Antes" });
++    await assert.rejects(() => svc.api.leerDatos({ empresaId: "otra" }), (err) => err.codigo === "NO_ENCONTRADO");
++  });
++  it("PUT exige x-requested-with; un dato inválido responde 400", async () => {
++    const { svc, e } = montar({});
++    const sin = res();
++    await svc.manejadores.guardarDatos({ method: "PUT", headers: {}, auth: { empresaId: "E1" }, body: { pie: "Hola" } }, sin, assert.fail);
++    assert.equal(sin.codigo, 403);
++    assert.equal(e.datos, undefined);
++    const mal = res();
++    await svc.manejadores.guardarDatos({ method: "PUT", headers: { "x-requested-with": "fetch" }, auth: { empresaId: "E1" }, body: { idFiscal: "1" } }, mal, assert.fail);
++    assert.equal(mal.codigo, 400);
++    const ok = res();
++    await svc.manejadores.guardarDatos({ method: "PUT", headers: { "x-requested-with": "fetch" }, auth: { empresaId: "E1" }, body: { pie: "Hola" } }, ok, assert.fail);
++    assert.equal(ok.codigo, 200);
++    const lee = res();
++    await svc.manejadores.leerDatos({ auth: { empresaId: "E1" } }, lee, assert.fail);
++    assert.equal(lee.cuerpo.datos.pie, "Hola");
++  });
++});
