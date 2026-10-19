@@ -39,6 +39,15 @@ export const empresaSchema = marcarGlobal(
         // Niveles por puntos acumulados (5.30): de menor a mayor
         niveles: [{ _id: false, nombre: String, desde: Number }],
       },
+      // Marca visible en la carta pública (5.33): logo (URL https), eslogan y tres colores (#rrggbb).
+      // La validación y la paleta derivada viven en marca.js.
+      marca: {
+        logo: String,
+        eslogan: String,
+        colorPrincipal: String,
+        colorSecundario: String,
+        colorFondo: String,
+      },
       servicios: [
         {
           _id: false,

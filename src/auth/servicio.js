@@ -5,6 +5,7 @@ import { generarToken, hashToken } from "./tokens.js";
 import { leerCookie, serializarCookie } from "./cookies.js";
 import { crearLimitador } from "./limitador.js";
 import { crearServicioPin } from "./pin.js";
+import { crearServicioMarca } from "./marca.js";
 import { validarPassword } from "./politica-password.js";
 import { configPinDe } from "./pin-config.js";
 import { validarPaginaPrincipal } from "./preferencias.js";
@@ -481,8 +482,11 @@ export function crearServicioAuth(modelos, opciones = {}) {
     cookieDispositivoDe,
   });
 
+  const marca = crearServicioMarca(modelos, { responderError, exigirCsrf });
+
   return {
     ...pin.api,
+    ...marca.api,
     login,
     crearSesion,
     obtenerSesion,
@@ -493,7 +497,7 @@ export function crearServicioAuth(modelos, opciones = {}) {
     guardarPreferencias,
     exigirCsrf,
     autenticar,
-    manejadores: { ...manejadores, ...pin.manejadores },
+    manejadores: { ...manejadores, ...pin.manejadores, ...marca.manejadores },
     listo: () =>
       Promise.all([Sesion.init(), Dispositivo.init(), CodigoEmparejamiento.init()]).then(() => undefined),
   };

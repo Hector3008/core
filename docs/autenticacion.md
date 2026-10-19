@@ -168,6 +168,7 @@ Los cambios solo afectan a lo que se haga después (un PIN ya guardado con 4 dí
 | Ruta | Quién | Permiso |
 |---|---|---|
 | `GET` / `PUT /seguridad` | Administración | `empresa:seguridad` |
+| `GET` / `PUT /marca` | Administración | `empresa:marca` |
 | `POST /dispositivos/codigo` · `GET /dispositivos` · `DELETE /dispositivos/:id` | Administración | `dispositivo:gestionar` |
 | `GET /usuarios` · `PUT` / `DELETE /usuarios/:usuarioId/pin` | Administración | `usuario:gestionar` |
 | `PUT /pin` | La propia persona | sesión iniciada |
@@ -181,3 +182,21 @@ El rol `admin` (`*`) ya tiene los tres permisos nuevos; otros roles los reciben 
 - Si `GET /auth/dispositivo/personas` responde 401 `DISPOSITIVO_INVALIDO`, mostrar la pantalla de emparejar.
 - Si `POST /auth/dispositivo/entrar` responde 423, mostrar el tiempo de espera (`reintentarEnSeg`).
 - `GET /auth/dispositivo/personas` devuelve también `largoMin`, `largoMax` e `inactividadMin`, para dibujar el teclado y el temporizador de bloqueo.
+
+## 13. Marca de la empresa (5.33)
+
+Logo, eslogan y colores que la empresa muestra en su carta pública. Se guardan en `Empresa.marca` y se editan con `GET` / `PUT /auth/marca` (permiso `empresa:marca`; el rol `admin` con `*` ya lo tiene). Va en `/auth` para que el gateway no tenga que montar nada nuevo.
+
+| Campo | Qué es |
+|---|---|
+| `logo` | Dirección `https://` de una imagen (como la foto de un plato: no se suben archivos). Sin usuario ni contraseña, hasta 500 caracteres. |
+| `eslogan` | Texto de hasta 80 caracteres, sin caracteres de control. Los saltos de línea se vuelven espacios. |
+| `colorPrincipal` | `#rrggbb` (también `#rgb`). Botones, puntos, barras de avance. |
+| `colorSecundario` | `#rrggbb`. Acento (estrellas, detalles). |
+| `colorFondo` | `#rrggbb`. Fondo de la carta; si es oscuro, el texto se vuelve claro. |
+
+- `PUT` recibe los campos que se quieren cambiar; `null` o texto vacío quita ese campo. Un campo desconocido o un cuerpo vacío dan 400. Responde `{ marca, vista }`: lo guardado y lo que verá el público.
+- **El servidor decide qué colores sirven.** Con cualquier color definido se calcula una paleta completa (`--color-principal`, `--color-principal-texto`, `--color-secundario`, `--color-fondo`, `--color-superficie`, `--color-texto`, `--color-texto-suave`, `--color-borde`, `--color-error`, `--color-error-fondo`): el texto, la superficie y los bordes salen del fondo, y el texto del botón se elige (blanco o casi negro) por contraste. Se rechaza con 400 un color elegido que se confunde con el fondo (contraste WCAG menor que 3 para el principal y 2,5 para el acento), y un fondo de tono medio que no deja leer el texto (contraste con el texto menor que 7). Los colores sin definir usan el valor por defecto de su tema, y esos no se comprueban.
+- **Con colores propios la carta no sigue el modo oscuro del dispositivo**: el fondo lo decide la empresa (por defecto, el claro de siempre). Sin colores, la carta sigue como antes.
+- `marcaPublica(empresa)` (exportada por el núcleo) es lo que deben usar los servicios para dar la marca al público: `{ logo, eslogan, tema, colores }` o `null` si la empresa no personalizó nada. Nunca lanza error: una marca guardada que ya no sirve (por ejemplo, editada a mano en la base) se ignora y no rompe la carta.
+- La validación y la paleta están en `src/marca.js` (lógica pura); el guardado y las rutas, en `src/auth/marca.js`.
