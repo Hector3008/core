@@ -48,6 +48,14 @@ export const empresaSchema = marcarGlobal(
         colorSecundario: String,
         colorFondo: String,
       },
+      // Datos que salen impresos en los comprobantes (5.34). Validación en datos-empresa.js.
+      datos: {
+        razonSocial: String,
+        idFiscal: String,
+        direccion: String,
+        telefono: String,
+        pie: String,
+      },
       servicios: [
         {
           _id: false,

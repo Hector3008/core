@@ -169,6 +169,7 @@ Los cambios solo afectan a lo que se haga después (un PIN ya guardado con 4 dí
 |---|---|---|
 | `GET` / `PUT /seguridad` | Administración | `empresa:seguridad` |
 | `GET` / `PUT /marca` | Administración | `empresa:marca` |
+| `GET` / `PUT /datos-empresa` | Administración | `empresa:datos` |
 | `POST /dispositivos/codigo` · `GET /dispositivos` · `DELETE /dispositivos/:id` | Administración | `dispositivo:gestionar` |
 | `GET /usuarios` · `PUT` / `DELETE /usuarios/:usuarioId/pin` | Administración | `usuario:gestionar` |
 | `PUT /pin` | La propia persona | sesión iniciada |
@@ -200,3 +201,20 @@ Logo, eslogan y colores que la empresa muestra en su carta pública. Se guardan 
 - **Con colores propios la carta no sigue el modo oscuro del dispositivo**: el fondo lo decide la empresa (por defecto, el claro de siempre). Sin colores, la carta sigue como antes.
 - `marcaPublica(empresa)` (exportada por el núcleo) es lo que deben usar los servicios para dar la marca al público: `{ logo, eslogan, tema, colores }` o `null` si la empresa no personalizó nada. Nunca lanza error: una marca guardada que ya no sirve (por ejemplo, editada a mano en la base) se ignora y no rompe la carta.
 - La validación y la paleta están en `src/marca.js` (lógica pura); el guardado y las rutas, en `src/auth/marca.js`.
+
+## 14. Datos de la empresa para sus comprobantes (5.34)
+
+Razón social, RUC (o identificación fiscal), dirección, teléfono y un pie de página que salen impresos en los recibos. Se guardan en `Empresa.datos` y se editan con `GET` / `PUT /auth/datos-empresa` (permiso `empresa:datos`; el rol `admin` con `*` ya lo tiene). Igual que la marca, va en `/auth`: el gateway no monta nada nuevo.
+
+| Campo | Regla |
+|---|---|
+| `razonSocial` | Hasta 80 caracteres. |
+| `idFiscal` | De 5 a 20 caracteres: letras, números, `.`, `-` o `/`, sin espacios. Se guarda en mayúsculas. **No se verifica contra ninguna autoridad.** |
+| `direccion` | Hasta 120 caracteres. |
+| `telefono` | Hasta 30 caracteres: números, espacios y `+ - ( )`. |
+| `pie` | Hasta 120 caracteres, una línea. |
+
+- `PUT` recibe los campos a cambiar; `null` o texto vacío quita el campo. Un campo desconocido o un cuerpo vacío dan 400. Los espacios repetidos y los saltos de línea se vuelven un solo espacio. Responde `{ datos, vista }`: lo guardado y el encabezado tal como se imprime.
+- `emisorDe(empresa)` (exportada por el núcleo) es lo que deben usar los servicios para armar el encabezado de un comprobante: `{ nombre, razonSocial, idFiscal, etiquetaIdFiscal, direccion, telefono, pie, logo }`. El logo es el de la marca (5.33) si es una dirección https segura. La etiqueta del identificador es «RUC» para Perú (o sin país) y «ID fiscal» para los demás países. Nunca lanza error: un dato guardado a mano y mal formado se ignora.
+- Estos datos **no hacen fiscal** un recibo: son texto que la empresa escribe para que salga impreso.
+- La validación está en `src/datos-empresa.js` (lógica pura); el guardado y las rutas, en `src/auth/datos.js`.

@@ -31,6 +31,9 @@ export function montarRutas(router, { auth, autenticar, requierePermiso, emplead
   // Marca de la empresa (5.33): logo, eslogan y colores de la carta pública
   router.get("/marca", ...con("empresa:marca"), m.leerMarca);
   router.put("/marca", ...con("empresa:marca"), m.guardarMarca);
+  // Datos de la empresa para sus comprobantes (5.34): razón social, RUC, dirección, teléfono y pie
+  router.get("/datos-empresa", ...con("empresa:datos"), m.leerDatos);
+  router.put("/datos-empresa", ...con("empresa:datos"), m.guardarDatos);
   router.post("/dispositivos/codigo", ...con("dispositivo:gestionar"), m.crearCodigo);
   router.get("/dispositivos", ...con("dispositivo:gestionar"), m.listarDispositivos);
   router.delete("/dispositivos/:id", ...con("dispositivo:gestionar"), m.revocarDispositivo);

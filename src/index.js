@@ -31,6 +31,7 @@ export { ErrorCatalogo } from "./catalogo/errores.js";
 export { ErrorFidelizacion } from "./fidelizacion/errores.js";
 export { calcularDescuento } from "./fidelizacion/beneficios.js";
 export { marcaPublica } from "./marca.js";
+export { emisorDe } from "./datos-empresa.js";
 export { hashPassword, verificarPassword } from "./password.js";
 
 // readyState de Mongoose: 0 desconectado, 1 conectado, 2 conectando, 3 desconectando
