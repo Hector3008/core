@@ -3,7 +3,7 @@ export const PLANTILLAS = {
   base: {
     admin: ["*"],
   },
-  restaurante: {
+  tobt: {
     mesero: [
       "estacion:creacion",
       "estacion:carta",

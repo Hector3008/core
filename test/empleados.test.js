@@ -35,9 +35,9 @@ describe("gestión de empleados", opts, () => {
     a = core.auth;
     emp = core.empleados;
     await a.listo();
-    e1 = await core.empresas.crearEmpresa({ nombre: "Cafe Uno", slug: "uno", servicios: ["restaurante"] });
-    e2 = await core.empresas.crearEmpresa({ nombre: "Cafe Dos", slug: "dos", servicios: ["restaurante"] });
-    e3 = await core.empresas.crearEmpresa({ nombre: "Cafe Tres", slug: "tres", servicios: ["restaurante"] });
+    e1 = await core.empresas.crearEmpresa({ nombre: "Cafe Uno", slug: "uno", servicios: ["tobt"] });
+    e2 = await core.empresas.crearEmpresa({ nombre: "Cafe Dos", slug: "dos", servicios: ["tobt"] });
+    e3 = await core.empresas.crearEmpresa({ nombre: "Cafe Tres", slug: "tres", servicios: ["tobt"] });
     const mk = (correo, nombre) => core.empresas.crearUsuario({ correo, password: PASS, nombre });
     admin = await mk("admin@x.com", "Admin");
     admin2 = await mk("admin2@x.com", "Admin Dos");

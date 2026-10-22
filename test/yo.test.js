@@ -66,7 +66,7 @@ describe("GET /auth/yo y preferencias", opts, () => {
     e1 = await core.empresas.crearEmpresa({
       nombre: "Cafe Uno",
       slug: "uno",
-      servicios: ["restaurante"],
+      servicios: ["tobt"],
     });
     e2 = await core.empresas.crearEmpresa({
       nombre: "Tienda Dos",
@@ -154,7 +154,7 @@ describe("GET /auth/yo y preferencias", opts, () => {
     ]);
     assert.equal(y.usuario.correo, "ana@x.com");
     assert.equal(y.empresaActivaId, String(e1._id));
-    assert.deepEqual(y.servicios, ["restaurante"]);
+    assert.deepEqual(y.servicios, ["tobt"]);
     assert.equal(y.paginaPrincipal, null);
     assert.equal(y.pinHabilitado, false);
     assert.equal(y.tienePin, false);
@@ -195,7 +195,7 @@ describe("GET /auth/yo y preferencias", opts, () => {
       el,
       assert.ifError,
     );
-    assert.deepEqual(el.body.servicios, ["restaurante"]);
+    assert.deepEqual(el.body.servicios, ["tobt"]);
   });
 
   it("un servicio desactivado en la empresa no aparece en /yo", async () => {
@@ -204,7 +204,7 @@ describe("GET /auth/yo y preferencias", opts, () => {
       {
         servicios: [
           { codigo: "siscore", activa: false },
-          { codigo: "restaurante", activa: true },
+          { codigo: "tobt", activa: true },
         ],
       },
     );
@@ -219,7 +219,7 @@ describe("GET /auth/yo y preferencias", opts, () => {
       el,
       assert.ifError,
     );
-    assert.deepEqual(el.body.servicios, ["restaurante"]);
+    assert.deepEqual(el.body.servicios, ["tobt"]);
     await core.modelos.Empresa.updateOne(
       { _id: e2._id },
       { servicios: [{ codigo: "siscore", activa: true }] },
@@ -262,11 +262,11 @@ describe("GET /auth/yo y preferencias", opts, () => {
   it("guardar paginaPrincipal: queda en /yo, es de la persona (no cambia a otra) y null la quita", async () => {
     const cookie = await entrar("ana@x.com", "3.3.3.7");
     const p = await preferencias(cookie, {
-      paginaPrincipal: "restaurante.pedidos",
+      paginaPrincipal: "tobt.pedidos",
     });
     assert.equal(p.statusCode, 200);
-    assert.deepEqual(p.body, { paginaPrincipal: "restaurante.pedidos" });
-    assert.equal((await yo(cookie)).paginaPrincipal, "restaurante.pedidos");
+    assert.deepEqual(p.body, { paginaPrincipal: "tobt.pedidos" });
+    assert.equal((await yo(cookie)).paginaPrincipal, "tobt.pedidos");
 
     const otra = await yo(await entrar("sin@x.com", "3.3.3.8"));
     assert.equal(otra.paginaPrincipal, null);
@@ -283,7 +283,7 @@ describe("GET /auth/yo y preferencias", opts, () => {
     await preferencias(cookie, { paginaPrincipal: "perfil" });
     for (const malo of [
       "https://malo.com",
-      "/restaurante/pedidos",
+      "/tobt/pedidos",
       "Perfil",
       7,
       { $ne: null },

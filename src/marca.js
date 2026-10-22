@@ -10,7 +10,7 @@ export const MAX_LOGO = 500;
 export const CAMPOS_MARCA = ["logo", "eslogan", "colorPrincipal", "colorSecundario", "colorFondo"];
 const COLORES = ["colorPrincipal", "colorSecundario", "colorFondo"];
 
-// Valores por defecto de la carta (los mismos de client/src/estilos.css de restaurante).
+// Valores por defecto de la carta (los mismos de client/src/estilos.css de tobt).
 export const FONDO_CLARO = "#f4f1ea";
 const PRINCIPAL = { claro: "#1f5f4a", oscuro: "#4fb08f" };
 const SECUNDARIO = { claro: "#c8873a", oscuro: "#e0a258" };

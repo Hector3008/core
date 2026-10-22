@@ -16,7 +16,7 @@ const MAX_MOVIMIENTOS = 100;
  * Fidelización: puntos de los clientes (arquitectura 5.11 y 5.25).
  *
  * Un libro de movimientos de solo inserción por empresa; el saldo se calcula sumándolos. Los puntos se acumulan
- * cuando un documento llega a su estado de cobro (en el restaurante, el pedido `pagado`), escuchando el evento
+ * cuando un documento llega a su estado de cobro (en tobt, el pedido `pagado`), escuchando el evento
  * `estado` del motor, y solo si el cliente dio su consentimiento de `programaPuntos`. Es idempotente: un documento
  * acumula una sola vez (índice único por `{ empresaId, documentoCode, tipo }`).
  *

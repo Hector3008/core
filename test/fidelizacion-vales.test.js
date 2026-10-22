@@ -19,7 +19,7 @@ describe("vales contra MongoDB", opts, () => {
     for (const col of COLECCIONES) await conn.db.dropCollection(col).catch(() => {});
     core = createCore({ connection: conn });
     await Promise.all([core.clientes.listo(), core.fidelizacion.listo(), core.documentos.listo(), conn.model("Ticket").init()]);
-    e = await core.empresas.crearEmpresa({ nombre: "Cafe Vales", slug: "vales", servicios: ["restaurante"] });
+    e = await core.empresas.crearEmpresa({ nombre: "Cafe Vales", slug: "vales", servicios: ["tobt"] });
     c = await core.clientes.crear({ empresaId: e._id, actor: ADM, nombre: "Ana", telefono: "987654321" });
     await core.clientes.otorgarConsentimiento({ empresaId: e._id, actor: ADM, clienteId: c.id, finalidad: "programaPuntos", medio: "presencial" });
     ben = await core.fidelizacion.beneficios.crear({ empresaId: e._id, actor: ADM, nombre: "Café gratis", puntos: 100, tipo: "item_gratis", itemCodigo: "CAFE" });
@@ -50,7 +50,7 @@ describe("vales contra MongoDB", opts, () => {
   });
 
   it("los vales de una empresa no se ven desde otra", async () => {
-    const otra = await core.empresas.crearEmpresa({ nombre: "Otro", slug: "otro", servicios: ["restaurante"] });
+    const otra = await core.empresas.crearEmpresa({ nombre: "Otro", slug: "otro", servicios: ["tobt"] });
     const [t] = await core.fidelizacion.tickets.de({ empresaId: e._id, clienteId: c.id });
     await assert.rejects(core.fidelizacion.tickets.consultar({ empresaId: otra._id, actor: ADM, codigo: t.codigo }), { codigo: "NO_ENCONTRADO" });
   });

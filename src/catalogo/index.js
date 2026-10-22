@@ -21,7 +21,7 @@ const MAX_ERRORES_IMPORTACION = 50;
 /**
  * Catálogo de una empresa: lo que se puede vender o pedir (platos, bebidas, repuestos...).
  *
- * El núcleo no sabe nada de restaurante ni de siscore: guarda código, nombre, categoría y precio (los dos
+ * El núcleo no sabe nada de tobt ni de siscore: guarda código, nombre, categoría y precio (los dos
  * últimos opcionales) y un bloque de atributos que cada servicio declara con `registrarEsquema`. Toda
  * operación que cambia algo recibe `actor = { usuarioId, permisos }` y comprueba su permiso, como en
  * empleados y clientes: las rutas llevan `requierePermiso`, pero estas reglas protegen aunque alguien monte

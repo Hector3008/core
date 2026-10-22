@@ -38,12 +38,12 @@ describe("auth", opts, () => {
     core = createCore({ connection: conn, auth: { ahora: () => reloj, intentosPorCuenta: 3 } });
     auth = core.auth;
     await auth.listo();
-    e1 = await core.empresas.crearEmpresa({ nombre: "Cafe Uno", slug: "uno", servicios: ["restaurante"] });
-    e2 = await core.empresas.crearEmpresa({ nombre: "Cafe Dos", slug: "dos", servicios: ["restaurante"] });
+    e1 = await core.empresas.crearEmpresa({ nombre: "Cafe Uno", slug: "uno", servicios: ["tobt"] });
+    e2 = await core.empresas.crearEmpresa({ nombre: "Cafe Dos", slug: "dos", servicios: ["tobt"] });
     u1 = await core.empresas.crearUsuario({ correo: "ana@x.com", password: PASS, nombre: "Ana" });
     u2 = await core.empresas.crearUsuario({ correo: "beto@x.com", password: PASS });
     u3 = await core.empresas.crearUsuario({ correo: "sin@x.com", password: PASS });
-    const rol = "mesero"; // plantilla de restaurante: tiene documento:crear, no documento:borrar
+    const rol = "mesero"; // plantilla de tobt: tiene documento:crear, no documento:borrar
     await core.empresas.agregarMiembro({ empresaId: e1._id, usuarioId: u1._id, rol });
     await core.empresas.agregarMiembro({ empresaId: e1._id, usuarioId: u2._id, rol });
     await core.empresas.agregarMiembro({ empresaId: e2._id, usuarioId: u2._id, rol });

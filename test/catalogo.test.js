@@ -24,9 +24,9 @@ describe("catálogo (MongoDB real)", opts, () => {
     core = createCore({ connection: conn });
     cat = core.catalogo;
     await cat.listo();
-    e1 = await core.empresas.crearEmpresa({ nombre: "Cafe Uno", slug: "uno", servicios: ["restaurante"] });
+    e1 = await core.empresas.crearEmpresa({ nombre: "Cafe Uno", slug: "uno", servicios: ["tobt"] });
     e2 = await core.empresas.crearEmpresa({ nombre: "Repuestos Dos", slug: "dos", servicios: ["siscore"], moneda: "usd" });
-    e3 = await core.empresas.crearEmpresa({ nombre: "Cafe Tres", slug: "tres", servicios: ["restaurante"] });
+    e3 = await core.empresas.crearEmpresa({ nombre: "Cafe Tres", slug: "tres", servicios: ["tobt"] });
   });
   after(async () => {
     for (const c of COLECCIONES) await conn.db.dropCollection(c).catch(() => {});

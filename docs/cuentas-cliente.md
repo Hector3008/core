@@ -6,7 +6,7 @@ La cuenta de un cliente vive en su ficha `Cliente` de **cada empresa** (campo `c
 - Colección `sesiones_cliente` (con tenancy): hash SHA-256 del token, `clienteId`, caducidad por inactividad (7 días) y máxima (30 días, TTL).
 - Cookie `cs_<slug-de-la-empresa>` (`HttpOnly`, `SameSite=Lax`, `Secure` en producción). Una cookie por empresa.
 - `core.cuentasCliente.autenticarCliente({ empresaDe })` es el middleware para rutas del cliente: deja `req.cliente = { clienteId, empresaId, sesionId }` y **nunca** `req.auth`.
-- `empresaDe(req)` lo pone el servicio que monta las rutas: devuelve `{ id, slug }` o lanza un error con `status` y `codigo` (el restaurante lo saca del slug de la ruta).
+- `empresaDe(req)` lo pone el servicio que monta las rutas: devuelve `{ id, slug }` o lanza un error con `status` y `codigo` (tobt lo saca del slug de la ruta).
 
 ## Cómo nace una cuenta
 1. **El personal la crea** (`POST /clientes/:id/cuenta`, permiso `cliente:cuenta`): `{ generarPassword: true }` o `{ password }`. Devuelve `passwordTemporal` **una sola vez** (`Cache-Control: no-store`); `debeCambiarPassword` queda en `true`. Restablecer: `POST /clientes/:id/cuenta/password`.

@@ -38,8 +38,8 @@ describe("PIN y dispositivos", opts, () => {
     });
     a = core.auth;
     await a.listo();
-    e1 = await core.empresas.crearEmpresa({ nombre: "Cafe Uno", slug: "uno", servicios: ["restaurante"] });
-    e2 = await core.empresas.crearEmpresa({ nombre: "Cafe Dos", slug: "dos", servicios: ["restaurante"] });
+    e1 = await core.empresas.crearEmpresa({ nombre: "Cafe Uno", slug: "uno", servicios: ["tobt"] });
+    e2 = await core.empresas.crearEmpresa({ nombre: "Cafe Dos", slug: "dos", servicios: ["tobt"] });
     const mk = (correo, nombre) => core.empresas.crearUsuario({ correo, password: PASS, nombre });
     admin = await mk("admin@x.com", "Admin");
     coc = await mk("coc@x.com", "Carla Cocina");

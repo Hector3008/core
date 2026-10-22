@@ -18,8 +18,8 @@ describe("fidelización contra MongoDB", opts, () => {
     for (const c of COLECCIONES) await conn.db.dropCollection(c).catch(() => {});
     core = createCore({ connection: conn });
     await Promise.all([core.clientes.listo(), core.fidelizacion.listo(), core.documentos.listo()]);
-    e1 = await core.empresas.crearEmpresa({ nombre: "Cafe Uno", slug: "uno", servicios: ["restaurante"] });
-    e2 = await core.empresas.crearEmpresa({ nombre: "Cafe Dos", slug: "dos", servicios: ["restaurante"] });
+    e1 = await core.empresas.crearEmpresa({ nombre: "Cafe Uno", slug: "uno", servicios: ["tobt"] });
+    e2 = await core.empresas.crearEmpresa({ nombre: "Cafe Dos", slug: "dos", servicios: ["tobt"] });
     c1 = await core.clientes.crear({ empresaId: e1._id, actor: ADM, nombre: "Ana", telefono: "987654321" });
     c2 = await core.clientes.crear({ empresaId: e2._id, actor: ADM, nombre: "Ana otra", telefono: "987654321" });
     await core.clientes.otorgarConsentimiento({ empresaId: e1._id, actor: ADM, clienteId: c1.id, finalidad: "programaPuntos", medio: "presencial" });

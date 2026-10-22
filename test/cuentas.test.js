@@ -18,8 +18,8 @@ describe("cuentas de cliente contra MongoDB", opts, () => {
     core = createCore({ connection: conn });
     cc = core.cuentasCliente;
     await Promise.all([core.clientes.listo(), cc.listo(), core.fidelizacion.listo()]);
-    e1 = await core.empresas.crearEmpresa({ nombre: "Cafe Uno", slug: "uno", servicios: ["restaurante"] });
-    e2 = await core.empresas.crearEmpresa({ nombre: "Cafe Dos", slug: "dos", servicios: ["restaurante"] });
+    e1 = await core.empresas.crearEmpresa({ nombre: "Cafe Uno", slug: "uno", servicios: ["tobt"] });
+    e2 = await core.empresas.crearEmpresa({ nombre: "Cafe Dos", slug: "dos", servicios: ["tobt"] });
   });
   after(async () => {
     for (const c of COLECCIONES) await conn.db.dropCollection(c).catch(() => {});

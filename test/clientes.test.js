@@ -32,9 +32,9 @@ describe("gestión de clientes", opts, () => {
     core = createCore({ connection: conn });
     cl = core.clientes;
     await cl.listo();
-    e1 = await core.empresas.crearEmpresa({ nombre: "Cafe Uno", slug: "uno", servicios: ["restaurante"] });
-    e2 = await core.empresas.crearEmpresa({ nombre: "Cafe Argentino", slug: "ar", servicios: ["restaurante"], pais: "ar" });
-    e3 = await core.empresas.crearEmpresa({ nombre: "Cafe Tres", slug: "tres", servicios: ["restaurante"] });
+    e1 = await core.empresas.crearEmpresa({ nombre: "Cafe Uno", slug: "uno", servicios: ["tobt"] });
+    e2 = await core.empresas.crearEmpresa({ nombre: "Cafe Argentino", slug: "ar", servicios: ["tobt"], pais: "ar" });
+    e3 = await core.empresas.crearEmpresa({ nombre: "Cafe Tres", slug: "tres", servicios: ["tobt"] });
   });
   after(async () => {
     for (const c of COLECCIONES) await conn.db.dropCollection(c).catch(() => {});

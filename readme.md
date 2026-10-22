@@ -1,6 +1,6 @@
 # core
 
-Núcleo común sobre el que se montan los servicios (restaurante, siscore, etc.). Se escribe una sola vez y cada servicio lo usa como dependencia.
+Núcleo común sobre el que se montan los servicios (tobt, siscore, etc.). Se escribe una sola vez y cada servicio lo usa como dependencia.
 
 El núcleo **no abre ni cierra conexiones**: usa la conexión de Mongoose que le entrega el gateway.
 
@@ -96,7 +96,7 @@ Si pasa, deja `req.membresia` y `req.rol`, y el resto de la request corre dentro
 
 ## Documentos
 
-El motor no sabe nada de restaurante ni de siscore: aplica las reglas que cada servicio le registra al arrancar. Las reglas viven en memoria (viajan con el código del servicio); los documentos, en MongoDB.
+El motor no sabe nada de tobt ni de siscore: aplica las reglas que cada servicio le registra al arrancar. Las reglas viven en memoria (viajan con el código del servicio); los documentos, en MongoDB.
 
 ```js
 core.documentos.registrarTipo({

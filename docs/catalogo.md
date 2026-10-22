@@ -2,7 +2,7 @@
 
 Qué resuelve: llevar la lista de lo que una empresa vende o sirve (platos y bebidas en un restaurante, repuestos en siscore) con su código, nombre, categoría y precio; buscarla; corregirla; darla de baja sin perder la historia; cargarla en bloque desde una hoja de cálculo; y entregarles a los servicios, al armar un documento, la copia de los datos que quedará en él.
 
-El núcleo **no sabe nada de restaurante ni de siscore**: guarda lo común y deja un bloque de `atributos` que cada servicio declara. El catálogo es **uno por empresa**, aunque la empresa tenga contratados varios servicios.
+El núcleo **no sabe nada de tobt ni de siscore**: guarda lo común y deja un bloque de `atributos` que cada servicio declara. El catálogo es **uno por empresa**, aunque la empresa tenga contratados varios servicios.
 
 ## El ítem
 
