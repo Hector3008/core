@@ -14,6 +14,7 @@ import { clienteSchema } from "../clientes/modelo.js";
 import { itemSchema } from "../catalogo/modelo.js";
 import { sesionClienteSchema } from "../cuentas/modelo.js";
 import { movimientoPuntosSchema, beneficioSchema, ticketSchema, retoSchema } from "../fidelizacion/modelo.js";
+import { promocionSchema } from "../promociones/modelo.js";
 
 // core.model(nombre, schema, coleccion?) ya existe en la pieza 1
 export function registrarModelos(core) {
@@ -40,5 +41,6 @@ export function registrarModelos(core) {
     Beneficio: core.model("Beneficio", beneficioSchema, "beneficios"),
     Ticket: core.model("Ticket", ticketSchema, "tickets"),
     Reto: core.model("Reto", retoSchema, "retos"),
+    Promocion: core.model("Promocion", promocionSchema, "promociones"),
   };
 }

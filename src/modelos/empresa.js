@@ -18,6 +18,9 @@ export const empresaSchema = marcarGlobal(
       pais: { type: String, default: "PE", uppercase: true, trim: true },
       // Moneda de los precios del catálogo (ISO 4217 de 3 letras). Las empresas anteriores al campo asumen PEN.
       moneda: { type: String, default: "PEN", uppercase: true, trim: true },
+      // Zona horaria (nombre IANA, por ejemplo America/Lima) con la que se leen los días y horarios de las promociones (5.40).
+      // Sin fijar (null) se usa la del país (zona.js).
+      zonaHoraria: { type: String, default: null, trim: true },
       // Opciones de seguridad que ajusta cada empresa. Los valores por defecto y los límites
       // viven en auth/pin-config.js (no en el esquema) para validarlos con mensajes claros.
       seguridad: {
