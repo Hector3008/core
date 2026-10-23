@@ -169,10 +169,10 @@ describe("rutas de clientes", () => {
       autenticar: () => () => {},
       requierePermiso: (p) => (pedidos.push(p), () => {}),
     });
-    assert.equal(rutas.length, 22);
+    assert.equal(rutas.length, 23);
     assert.ok(rutas.every((r) => r.n === 3));
     for (const p of [
-      "/:clienteId/cuenta", "/:clienteId/cuenta/password", "/:clienteId/puntos", "/:clienteId/puntos/canjear",
+      "/:clienteId/cuenta", "/:clienteId/cuenta/password", "/:clienteId/puntos", "/:clienteId/puntos/canjear", "/:clienteId/puntos/ajustar",
       "/:clienteId/tickets", "/beneficios", "/beneficios/:beneficioId", "/retos", "/retos/:retoId", "/fidelizacion/config", "/tickets/:codigo",
     ])
       assert.ok(rutas.some((r) => r.path === p), p);

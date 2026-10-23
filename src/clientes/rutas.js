@@ -14,6 +14,7 @@
  *   POST /:clienteId/cuenta/password  cliente:cuenta          restablece la contraseña (se le olvidó)
  *   GET  /:clienteId/puntos           cliente:leer            saldo y últimos movimientos
  *   POST /:clienteId/puntos/canjear   fidelizacion:canjear    { puntos, detalle? }
+ *   POST /:clienteId/puntos/ajustar   fidelizacion:gestionar  { puntos (con signo), detalle } → { saldo }; no cuenta como consumo (5.39)
  *
  * Beneficios y vales (arquitectura 5.30):
  *   GET  /beneficios                  fidelizacion:canjear    { beneficios }
@@ -67,6 +68,7 @@ export function montarRutasClientes(router, { clientes, autenticar, requierePerm
   if (fidelizacion) {
     router.get("/:clienteId/puntos", ...leer, fidelizacion.manejadores.puntos);
     router.post("/:clienteId/puntos/canjear", autenticar(), requierePermiso("fidelizacion:canjear"), fidelizacion.manejadores.canjear);
+    router.post("/:clienteId/puntos/ajustar", autenticar(), requierePermiso("fidelizacion:gestionar"), fidelizacion.manejadores.ajustar);
     router.post("/:clienteId/tickets", autenticar(), requierePermiso("fidelizacion:canjear"), fidelizacion.manejadores.emitirTicket);
   }
 

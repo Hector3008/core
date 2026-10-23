@@ -18,7 +18,7 @@ Un escucha de `core.documentos.on("estado")` llama a `acumularPorDocumento({ emp
 - Configuración por empresa (`Empresa.fidelizacion`): `{ habilitada, puntosPorUnidad }`; por defecto habilitada con 1 punto por unidad de moneda (**supuesto por confirmar**).
 
 ## Operaciones
-`saldo`, `resumen({ empresaId, clienteId, limite })`, `canjear` (permiso `fidelizacion:canjear`, lo autoriza el personal), `ajustar` y `guardarConfig` (`fidelizacion:gestionar`), `leerConfig`, `manejadores.{puntos, canjear}`. Rutas (en `/clientes`): `GET /:id/puntos` (`cliente:leer`), `POST /:id/puntos/canjear` (`{ puntos, detalle }`).
+`saldo`, `resumen({ empresaId, clienteId, limite })`, `canjear` (permiso `fidelizacion:canjear`, lo autoriza el personal), `ajustar` y `guardarConfig` (`fidelizacion:gestionar`), `leerConfig`, `manejadores.{puntos, canjear, ajustar}`. Rutas (en `/clientes`): `GET /:id/puntos` (`cliente:leer`), `POST /:id/puntos/canjear` (`{ puntos, detalle }`), `POST /:id/puntos/ajustar` (`fidelizacion:gestionar`, `{ puntos, detalle }`, 5.39). El ajuste es un movimiento `ajuste`: suma o resta al saldo, pero no cuenta como consumo (ni para nivel, ni para insignias, ni para retos). El motivo es obligatorio y no admite dejar el saldo en negativo. No tiene `documentoCode`, así que **no es idempotente**: enviarlo dos veces suma dos veces.
 
 ## Límites conocidos
 - No hay vencimiento automático de los puntos.

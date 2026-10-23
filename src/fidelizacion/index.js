@@ -692,6 +692,12 @@ export function crearServicioFidelizacion({ Empresa, MovimientoPuntos, Beneficio
         await canjear({ ...base(req), clienteId: req.params?.clienteId, puntos: req.body?.puntos, detalle: req.body?.detalle }),
       ),
     ),
+    /** POST /clientes/:clienteId/puntos/ajustar { puntos, detalle } → { saldo } (fidelizacion:gestionar). Movimiento `ajuste`: no cuenta como consumo. */
+    ajustar: envolver(true, async (req, res) =>
+      res.status(200).json(
+        await ajustar({ ...base(req), clienteId: req.params?.clienteId, puntos: req.body?.puntos, detalle: req.body?.detalle }),
+      ),
+    ),
   };
 
   return {

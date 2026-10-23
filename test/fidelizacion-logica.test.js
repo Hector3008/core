@@ -525,4 +525,29 @@ describe("manejadores HTTP de los puntos", () => {
     assert.equal(mucho.body.codigo, "SALDO_INSUFICIENTE");
     assert.equal(mucho.body.saldo, 6);
   });
+
+  it("POST ajustar (5.39): exige x-requested-with, gestionar y motivo; suma al saldo sin contar como consumo", async () => {
+    const m = crearMundo();
+    const llamar = async (actor, body, headers = X) => {
+      const r = res();
+      await m.servicio.manejadores.ajustar(req({ method: "POST", headers, ...auth(actor), params: { clienteId: C1 }, body }), r, (e) => {
+        throw e;
+      });
+      return r;
+    };
+    assert.equal((await llamar(ADM, { puntos: 50, detalle: "migración" }, {})).body.codigo, "CSRF");
+    const sinPermiso = await llamar(MESERO, { puntos: 50, detalle: "migración" });
+    assert.equal(sinPermiso.statusCode, 403);
+    assert.equal(sinPermiso.body.codigo, "PERMISO_INSUFICIENTE");
+    assert.equal((await llamar(ADM, { puntos: 50 })).statusCode, 400);
+    const ok = await llamar(ADM, { puntos: 50, detalle: "Saldo migrado del sistema anterior" });
+    assert.equal(ok.statusCode, 200);
+    assert.deepEqual(ok.body, { saldo: 50 });
+    const r = await conEmpresa(E1, () => m.servicio.resumen({ empresaId: E1, clienteId: C1 }));
+    assert.equal(r.saldo, 50);
+    assert.deepEqual(r.movimientos.map((x) => x.tipo), ["ajuste"]);
+    assert.equal(r.logros.acumulado, 0, "un ajuste no cuenta como consumo");
+    assert.equal(r.logros.consumos, 0);
+    assert.equal(r.logros.insignias.find((i) => i.id === "puntos_100").obtenida, false);
+  });
 });
