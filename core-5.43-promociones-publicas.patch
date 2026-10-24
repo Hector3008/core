@@ -1,0 +1,110 @@
+diff --git a/docs/promociones.md b/docs/promociones.md
+index 9ee6e1d..f016f86 100644
+--- a/docs/promociones.md
++++ b/docs/promociones.md
+@@ -67,3 +67,6 @@ gateway.use("/promociones", promociones);
+ - Sin topes, una promoción puede aplicarse sin límite de veces.
+ - El catálogo de tipos es cerrado; uno nuevo es una entrada más en `validacion.js` y en el evaluador.
+ - `simular` y `evaluar` no comprueban que los códigos existan en el catálogo.
++
++## Lo que ve el público (5.43)
++`vigentes({ empresaId, ahora? })` (sin actor: lectura pública) devuelve `{ zona, hoy, promociones }` con las promociones **activas que aún no vencieron** (la fecha `hasta` incluida), cada una con los datos de su regla (`tipo`, `objetivo`, `disparador`, `n`, `m`, `efecto`, `valor`, `vigencia`, `dias`, `horario`) y `vigenteAhora` (día, horario y fechas, a la hora de la empresa). Las que empiezan más adelante salen con `vigenteAhora: false`. Nunca expone `prioridad`, `acumulable` ni datos de quién la creó. La carta de `tobt` la usa para mostrar «Promociones» a los clientes.
+diff --git a/src/promociones/index.js b/src/promociones/index.js
+index ae6b5c7..45ef115 100644
+--- a/src/promociones/index.js
++++ b/src/promociones/index.js
+@@ -1,9 +1,9 @@
+ import { conEmpresa } from "../tenancy.js";
+ import { permite } from "../permisos.js";
+ import { ErrorAuth } from "../auth/errores.js";
+-import { zonaDeEmpresa } from "../zona.js";
++import { momentoLocal, zonaDeEmpresa } from "../zona.js";
+ import { ErrorPromocion } from "./errores.js";
+-import { evaluarPromociones, MAX_UNIDADES } from "./evaluador.js";
++import { estaVigente, evaluarPromociones, MAX_UNIDADES } from "./evaluador.js";
+ import { MAX_PROMOCIONES_ACTIVAS, validarPromocion } from "./validacion.js";
+ 
+ const ID = /^[0-9a-f]{24}$/i;
+@@ -114,6 +114,29 @@ export function crearServicioPromociones({ Empresa, Promocion }, auth) {
+     return evaluarPromociones({ lineas, promociones, ahora, zona: zonaDeEmpresa(empresa) });
+   }
+ 
++  /**
++   * Las promociones que un cliente puede ver (5.43, carta pública): las activas que aún no caducaron, con cada una
++   * marcada `vigenteAhora` (según día, horario y fechas, a la hora de la empresa). Sin actor: es una lectura pública.
++   * Solo salen los datos de la regla; nunca `prioridad`, `acumulable`, quién la creó ni fechas internas.
++   */
++  async function vigentes({ empresaId, ahora = new Date() }) {
++    const empresa = await empresaDe(empresaId);
++    const zona = zonaDeEmpresa(empresa);
++    const momento = momentoLocal(ahora, zona);
++    const lista = (await conEmpresa(empresaId, async () => await Promocion.find({ activa: true }).sort({ prioridad: 1, _id: 1 }).lean())).map(dto);
++    return {
++      zona,
++      hoy: momento.fecha,
++      promociones: lista
++        .filter((p) => !(p.vigencia?.hasta && p.vigencia.hasta < momento.fecha)) // las ya vencidas no se muestran
++        .map((p) => ({
++          id: p.id, nombre: p.nombre, descripcion: p.descripcion, tipo: p.tipo, objetivo: p.objetivo, disparador: p.disparador,
++          n: p.n, m: p.m, efecto: p.efecto, valor: p.valor, vigencia: p.vigencia, dias: p.dias, horario: p.horario,
++          vigenteAhora: estaVigente(p, momento),
++        })),
++    };
++  }
++
+   /**
+    * Prueba las reglas con un pedido de ejemplo, sin tocar ningún pedido. `borrador` (opcional) es una promoción aún sin
+    * guardar; con `soloBorrador` se evalúa ella sola. `ahora` (ISO, opcional) sirve para probar un horario.
+@@ -186,5 +209,5 @@ export function crearServicioPromociones({ Empresa, Promocion }, auth) {
+     ),
+   };
+ 
+-  return { listar, crear, editar, evaluar, simular, manejadores };
++  return { listar, crear, editar, evaluar, vigentes, simular, manejadores };
+ }
+diff --git a/test/promociones-servicio.test.js b/test/promociones-servicio.test.js
+index 7b0d080..0ab6f1b 100644
+--- a/test/promociones-servicio.test.js
++++ b/test/promociones-servicio.test.js
+@@ -301,3 +301,41 @@ describe("manejadores HTTP y rutas", () => {
+     assert.deepEqual(pedidos, ["promocion:leer", "promocion:gestionar"]);
+   });
+ });
++
++describe("vigentes: lo que ve el público (5.43)", () => {
++  let m;
++  beforeEach(() => (m = crearMundo()));
++  const ver = (ahora = JUEVES_20H, e = E1) => m.en(e, () => m.servicio.vigentes({ empresaId: e, ahora: new Date(ahora) }));
++
++  it("solo las activas, con vigenteAhora según día y horario en la hora de la empresa", async () => {
++    await m.crear(dos({ dias: [4, 5], horario: { desde: "18:00", hasta: "21:00" } })); // jueves y viernes de 18 a 21
++    await m.crear(dos({ nombre: "Lunes", dias: [1] }));
++    await m.crear(dos({ nombre: "Pausada", activa: false }));
++    const r = await ver(); // jueves 20:00 en Lima
++    assert.equal(r.zona, "America/Lima");
++    assert.equal(r.hoy, "2026-10-22");
++    assert.deepEqual(r.promociones.map((p) => [p.nombre, p.vigenteAhora]), [["2x1 en lattes", true], ["Lunes", false]]);
++    assert.equal((await ver("2026-10-23T05:00:00Z")).promociones[0].vigenteAhora, false, "viernes 00:00 en Lima: fuera del horario");
++  });
++
++  it("las vencidas no salen; las que aún no empiezan sí, como no vigentes", async () => {
++    await m.crear(dos({ nombre: "Vencida", vigencia: { hasta: "2026-10-21" } }));
++    await m.crear(dos({ nombre: "Hoy es el último día", vigencia: { hasta: "2026-10-22" } }));
++    await m.crear(dos({ nombre: "Próxima", vigencia: { desde: "2026-11-01", hasta: "2026-11-30" } }));
++    assert.deepEqual((await ver()).promociones.map((p) => [p.nombre, p.vigenteAhora]), [["Hoy es el último día", true], ["Próxima", false]]);
++  });
++
++  it("no expone datos internos ni mezcla empresas; no pide actor", async () => {
++    await m.crear(dos({ prioridad: 5, acumulable: true }));
++    await m.crear(dos({ nombre: "De otra empresa" }), ADM, E2);
++    const r = await ver();
++    assert.equal(r.promociones.length, 1);
++    const claves = Object.keys(r.promociones[0]);
++    for (const interno of ["prioridad", "acumulable", "activa", "creadaTs", "actualizadaTs", "creadoPor"]) assert.equal(claves.includes(interno), false, interno);
++    await rechaza(ver(JUEVES_20H, "aaaaaaaaaaaaaaaaaaaaaaa7"), "NO_ENCONTRADO", 404);
++  });
++
++  it("sin promociones: lista vacía", async () => {
++    assert.deepEqual((await ver()).promociones, []);
++  });
++});

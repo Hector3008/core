@@ -67,3 +67,6 @@ gateway.use("/promociones", promociones);
 - Sin topes, una promoción puede aplicarse sin límite de veces.
 - El catálogo de tipos es cerrado; uno nuevo es una entrada más en `validacion.js` y en el evaluador.
 - `simular` y `evaluar` no comprueban que los códigos existan en el catálogo.
+
+## Lo que ve el público (5.43)
+`vigentes({ empresaId, ahora? })` (sin actor: lectura pública) devuelve `{ zona, hoy, promociones }` con las promociones **activas que aún no vencieron** (la fecha `hasta` incluida), cada una con los datos de su regla (`tipo`, `objetivo`, `disparador`, `n`, `m`, `efecto`, `valor`, `vigencia`, `dias`, `horario`) y `vigenteAhora` (día, horario y fechas, a la hora de la empresa). Las que empiezan más adelante salen con `vigenteAhora: false`. Nunca expone `prioridad`, `acumulable` ni datos de quién la creó. La carta de `tobt` la usa para mostrar «Promociones» a los clientes.

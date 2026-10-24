@@ -301,3 +301,41 @@ describe("manejadores HTTP y rutas", () => {
     assert.deepEqual(pedidos, ["promocion:leer", "promocion:gestionar"]);
   });
 });
+
+describe("vigentes: lo que ve el público (5.43)", () => {
+  let m;
+  beforeEach(() => (m = crearMundo()));
+  const ver = (ahora = JUEVES_20H, e = E1) => m.en(e, () => m.servicio.vigentes({ empresaId: e, ahora: new Date(ahora) }));
+
+  it("solo las activas, con vigenteAhora según día y horario en la hora de la empresa", async () => {
+    await m.crear(dos({ dias: [4, 5], horario: { desde: "18:00", hasta: "21:00" } })); // jueves y viernes de 18 a 21
+    await m.crear(dos({ nombre: "Lunes", dias: [1] }));
+    await m.crear(dos({ nombre: "Pausada", activa: false }));
+    const r = await ver(); // jueves 20:00 en Lima
+    assert.equal(r.zona, "America/Lima");
+    assert.equal(r.hoy, "2026-10-22");
+    assert.deepEqual(r.promociones.map((p) => [p.nombre, p.vigenteAhora]), [["2x1 en lattes", true], ["Lunes", false]]);
+    assert.equal((await ver("2026-10-23T05:00:00Z")).promociones[0].vigenteAhora, false, "viernes 00:00 en Lima: fuera del horario");
+  });
+
+  it("las vencidas no salen; las que aún no empiezan sí, como no vigentes", async () => {
+    await m.crear(dos({ nombre: "Vencida", vigencia: { hasta: "2026-10-21" } }));
+    await m.crear(dos({ nombre: "Hoy es el último día", vigencia: { hasta: "2026-10-22" } }));
+    await m.crear(dos({ nombre: "Próxima", vigencia: { desde: "2026-11-01", hasta: "2026-11-30" } }));
+    assert.deepEqual((await ver()).promociones.map((p) => [p.nombre, p.vigenteAhora]), [["Hoy es el último día", true], ["Próxima", false]]);
+  });
+
+  it("no expone datos internos ni mezcla empresas; no pide actor", async () => {
+    await m.crear(dos({ prioridad: 5, acumulable: true }));
+    await m.crear(dos({ nombre: "De otra empresa" }), ADM, E2);
+    const r = await ver();
+    assert.equal(r.promociones.length, 1);
+    const claves = Object.keys(r.promociones[0]);
+    for (const interno of ["prioridad", "acumulable", "activa", "creadaTs", "actualizadaTs", "creadoPor"]) assert.equal(claves.includes(interno), false, interno);
+    await rechaza(ver(JUEVES_20H, "aaaaaaaaaaaaaaaaaaaaaaa7"), "NO_ENCONTRADO", 404);
+  });
+
+  it("sin promociones: lista vacía", async () => {
+    assert.deepEqual((await ver()).promociones, []);
+  });
+});

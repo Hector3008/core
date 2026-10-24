@@ -1,9 +1,9 @@
 import { conEmpresa } from "../tenancy.js";
 import { permite } from "../permisos.js";
 import { ErrorAuth } from "../auth/errores.js";
-import { zonaDeEmpresa } from "../zona.js";
+import { momentoLocal, zonaDeEmpresa } from "../zona.js";
 import { ErrorPromocion } from "./errores.js";
-import { evaluarPromociones, MAX_UNIDADES } from "./evaluador.js";
+import { estaVigente, evaluarPromociones, MAX_UNIDADES } from "./evaluador.js";
 import { MAX_PROMOCIONES_ACTIVAS, validarPromocion } from "./validacion.js";
 
 const ID = /^[0-9a-f]{24}$/i;
@@ -115,6 +115,29 @@ export function crearServicioPromociones({ Empresa, Promocion }, auth) {
   }
 
   /**
+   * Las promociones que un cliente puede ver (5.43, carta pública): las activas que aún no caducaron, con cada una
+   * marcada `vigenteAhora` (según día, horario y fechas, a la hora de la empresa). Sin actor: es una lectura pública.
+   * Solo salen los datos de la regla; nunca `prioridad`, `acumulable`, quién la creó ni fechas internas.
+   */
+  async function vigentes({ empresaId, ahora = new Date() }) {
+    const empresa = await empresaDe(empresaId);
+    const zona = zonaDeEmpresa(empresa);
+    const momento = momentoLocal(ahora, zona);
+    const lista = (await conEmpresa(empresaId, async () => await Promocion.find({ activa: true }).sort({ prioridad: 1, _id: 1 }).lean())).map(dto);
+    return {
+      zona,
+      hoy: momento.fecha,
+      promociones: lista
+        .filter((p) => !(p.vigencia?.hasta && p.vigencia.hasta < momento.fecha)) // las ya vencidas no se muestran
+        .map((p) => ({
+          id: p.id, nombre: p.nombre, descripcion: p.descripcion, tipo: p.tipo, objetivo: p.objetivo, disparador: p.disparador,
+          n: p.n, m: p.m, efecto: p.efecto, valor: p.valor, vigencia: p.vigencia, dias: p.dias, horario: p.horario,
+          vigenteAhora: estaVigente(p, momento),
+        })),
+    };
+  }
+
+  /**
    * Prueba las reglas con un pedido de ejemplo, sin tocar ningún pedido. `borrador` (opcional) es una promoción aún sin
    * guardar; con `soloBorrador` se evalúa ella sola. `ahora` (ISO, opcional) sirve para probar un horario.
    */
@@ -186,5 +209,5 @@ export function crearServicioPromociones({ Empresa, Promocion }, auth) {
     ),
   };
 
-  return { listar, crear, editar, evaluar, simular, manejadores };
+  return { listar, crear, editar, evaluar, vigentes, simular, manejadores };
 }
