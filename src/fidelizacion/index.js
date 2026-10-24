@@ -89,7 +89,12 @@ export function crearServicioFidelizacion({ Empresa, MovimientoPuntos, Beneficio
     exigir(actor, "fidelizacion:gestionar");
     const c = validarConfig(cambios);
     await empresaDe(empresaId);
-    const $set = Object.fromEntries(Object.entries(c).map(([k, v]) => [`fidelizacion.${k}`, v]));
+    // `referidos` se guarda campo a campo: un cambio parcial no borra el resto.
+    const $set = {};
+    for (const [k, v] of Object.entries(c)) {
+      if (k === "referidos") for (const [kr, vr] of Object.entries(v)) $set[`fidelizacion.referidos.${kr}`] = vr;
+      else $set[`fidelizacion.${k}`] = v;
+    }
     await Empresa.updateOne({ _id: empresaId }, { $set });
     return leerConfig({ empresaId });
   }
@@ -131,7 +136,7 @@ export function crearServicioFidelizacion({ Empresa, MovimientoPuntos, Beneficio
     idValido(clienteId, "clienteId");
     const cfg = config ?? configDe(await empresaDe(empresaId));
     const libro = await conEmpresa(empresaId, async () => await MovimientoPuntos.find({ clienteId }).sort({ ts: 1 }).lean());
-    return calcularLogros({ movimientos: libro, niveles: cfg.niveles });
+    return calcularLogros({ movimientos: libro, niveles: cfg.niveles, incluirBonos: cfg.referidos.cuentaParaNiveles });
   }
 
   async function insertar({ empresaId, clienteId, tipo, puntos, detalle, documentoCode = null, itemCodigo = null, creadoPor = null }) {
@@ -140,7 +145,41 @@ export function crearServicioFidelizacion({ Empresa, MovimientoPuntos, Beneficio
     );
   }
 
+  // ---------- bonos (5.45) ----------
+  /**
+   * Da puntos `bono` (premio de referidos) a un cliente. `clave` identifica el premio y lo hace idempotente
+   * (índice único por documentoCode+tipo): repetirlo no suma otra vez. Solo con consentimiento de `programaPuntos`
+   * y cliente activo. Devuelve `{ otorgado, motivo? }`; nunca falla por falta de consentimiento.
+   */
+  async function otorgarBono({ empresaId, clienteId, puntos, detalle, clave }) {
+    idValido(clienteId, "clienteId");
+    validarPuntos(puntos);
+    if (typeof clave !== "string" || !clave) throw new ErrorFidelizacion("DATOS_INVALIDOS", "clave requerida");
+    let consiente;
+    try {
+      consiente = await clientes.tieneConsentimiento({ empresaId, clienteId, finalidad: "programaPuntos" });
+    } catch (e) {
+      if (e instanceof ErrorCliente && e.codigo === "NO_ENCONTRADO") return { otorgado: false, motivo: "cliente_no_encontrado" };
+      throw e;
+    }
+    if (!consiente) return { otorgado: false, motivo: "sin_consentimiento" };
+    try {
+      await insertar({ empresaId, clienteId, tipo: "bono", puntos, detalle: validarDetalle(detalle), documentoCode: clave });
+    } catch (e) {
+      if (e?.code !== 11000) throw e;
+      return { otorgado: true, yaRegistrado: true };
+    }
+    return { otorgado: true };
+  }
+
   // ---------- acumular ----------
+  // Quien quiera enterarse de cada acumulación (los referidos, 5.45) se anota aquí: recibe { empresaId, clienteId, monto, code }.
+  const alAcumularFns = [];
+  function alAcumular(fn) {
+    if (typeof fn !== "function") throw new Error("alAcumular: se requiere una función");
+    alAcumularFns.push(fn);
+  }
+
   /** Un servicio declara cuándo un documento da puntos y de dónde salen el cliente y el monto. */
   function registrarFuente({ tipo, estado, extraer } = {}) {
     if (typeof tipo !== "string" || !tipo || typeof estado !== "string" || !estado || typeof extraer !== "function")
@@ -200,6 +239,14 @@ export function crearServicioFidelizacion({ Empresa, MovimientoPuntos, Beneficio
         // Otro proceso (el escucha del motor y la propia operación) lo registró a la vez: es lo mismo.
         if (e?.code !== 11000) throw e;
         return { acumulados: puntos, yaRegistrado: true, clienteId: String(clienteId), saldo: await saldo({ empresaId, clienteId }) };
+      }
+      // Los observadores (referidos) no pueden romper la acumulación: si fallan, se registra y el pago sigue.
+      for (const fn of alAcumularFns) {
+        try {
+          await fn({ empresaId, clienteId: String(clienteId), monto, code });
+        } catch (e) {
+          console.error(`fidelizacion: falló un observador de acumulación (${code})`, e);
+        }
       }
       // Un reto completado con este pago da su vale ahora. Si algo falla no se pierde nada: el siguiente pago lo vuelve a evaluar.
       let retosGanados = [];
@@ -704,6 +751,8 @@ export function crearServicioFidelizacion({ Empresa, MovimientoPuntos, Beneficio
     registrarFuente,
     fuentes: () => [...fuentes.values()].map(({ tipo, estado }) => ({ tipo, estado })),
     acumularPorDocumento,
+    alAcumular,
+    otorgarBono,
     saldo,
     resumen,
     logros,

@@ -5,10 +5,10 @@ import { TIPOS_BENEFICIO, ESTADOS_TICKET, ORIGENES_TICKET } from "./beneficios.j
 
 const { ObjectId } = mongoose.Schema.Types;
 
-export const TIPOS_MOVIMIENTO = ["acumulo", "canje", "ajuste", "vencimiento"];
+export const TIPOS_MOVIMIENTO = ["acumulo", "canje", "ajuste", "vencimiento", "bono"];
 
 // Libro de movimientos de puntos: solo inserción. El saldo de un cliente es la suma de sus movimientos
-// (acumulo y ajuste positivo suman; canje, vencimiento y ajuste negativo restan: el signo ya va en `puntos`).
+// (acumulo, bono —premio por referidos, 5.45— y ajuste positivo suman; canje, vencimiento y ajuste negativo restan: el signo ya va en `puntos`).
 export const movimientoPuntosSchema = new mongoose.Schema(
   {
     clienteId: { type: ObjectId, required: true },

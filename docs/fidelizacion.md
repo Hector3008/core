@@ -1,6 +1,6 @@
 # Fidelización: puntos (`core.fidelizacion`)
 
-Libro de movimientos de **solo inserción** (`movimientos_puntos`, con tenancy): `{ clienteId, documentoCode, tipo: acumulo | canje | ajuste | vencimiento, puntos (entero con signo, no 0), detalle, creadoPor, ts }`. El saldo es la suma de los movimientos. Índice único parcial `{ empresaId, documentoCode, tipo }` (solo con `documentoCode` texto): reprocesar un documento no suma dos veces.
+Libro de movimientos de **solo inserción** (`movimientos_puntos`, con tenancy): `{ clienteId, documentoCode, tipo: acumulo | canje | ajuste | vencimiento | bono (5.45), puntos (entero con signo, no 0), detalle, creadoPor, ts }`. El saldo es la suma de los movimientos. Índice único parcial `{ empresaId, documentoCode, tipo }` (solo con `documentoCode` texto): reprocesar un documento no suma dos veces.
 
 ## Cuándo acumula
 El núcleo no sabe de pedidos: cada servicio declara su fuente.

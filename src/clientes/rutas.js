@@ -27,8 +27,14 @@
  *   PUT  /fidelizacion/config         fidelizacion:gestionar  { habilitada?, puntosPorUnidad? }
  *   GET  /tickets/:codigo             fidelizacion:canjear    el vale, su beneficio y su cliente
  *   POST /:clienteId/tickets          fidelizacion:canjear    { beneficioId } → emite el vale por el cliente
+ *
+ * Referidos (5.45):
+ *   GET  /referidos                   fidelizacion:gestionar  ?estado=&limite=&saltar= → { total, resumen, referidos }
+ *   GET  /:clienteId/referidos        cliente:leer            su código de invitación y a quiénes trajo
+ *   POST /:clienteId/referente        cliente:editar          { codigo } → 201: anota quién refirió a esta ficha nueva
+ *   (la config va en PUT /fidelizacion/config { referidos: { habilitada?, puntosReferente?, puntosReferido?, consumoMinimo?, maxPorCliente?, cuentaParaNiveles? } })
  */
-export function montarRutasClientes(router, { clientes, autenticar, requierePermiso, cuentasCliente, fidelizacion }) {
+export function montarRutasClientes(router, { clientes, autenticar, requierePermiso, cuentasCliente, fidelizacion, referidos }) {
   const m = clientes.manejadores;
   const leer = [autenticar(), requierePermiso("cliente:leer")];
   const crear = [autenticar(), requierePermiso("cliente:crear")];
@@ -49,6 +55,7 @@ export function montarRutasClientes(router, { clientes, autenticar, requierePerm
     router.get("/fidelizacion/config", ...canjear, f.config);
     router.put("/fidelizacion/config", ...gestionarPuntos, f.guardarConfig);
     router.get("/tickets/:codigo", ...canjear, f.ticket);
+    if (referidos) router.get("/referidos", ...gestionarPuntos, referidos.manejadores.listar);
   }
 
   router.get("/", ...leer, m.listar);
@@ -70,6 +77,11 @@ export function montarRutasClientes(router, { clientes, autenticar, requierePerm
     router.post("/:clienteId/puntos/canjear", autenticar(), requierePermiso("fidelizacion:canjear"), fidelizacion.manejadores.canjear);
     router.post("/:clienteId/puntos/ajustar", autenticar(), requierePermiso("fidelizacion:gestionar"), fidelizacion.manejadores.ajustar);
     router.post("/:clienteId/tickets", autenticar(), requierePermiso("fidelizacion:canjear"), fidelizacion.manejadores.emitirTicket);
+  }
+
+  if (referidos) {
+    router.get("/:clienteId/referidos", ...leer, referidos.manejadores.deCliente);
+    router.post("/:clienteId/referente", ...editar, referidos.manejadores.vincular);
   }
 
   return router;

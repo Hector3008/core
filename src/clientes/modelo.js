@@ -63,6 +63,7 @@ export const clienteSchema = new mongoose.Schema(
     cuenta: { type: cuentaSchema, default: null },
     consentimientos,
     historialConsentimientos: { type: [historialSchema], default: [] }, // últimos 100 cambios
+    codigoReferido: { type: String, default: null }, // su código para invitar amigos (5.45); se crea al pedirlo
     activo: { type: Boolean, default: true },
     desactivadoTs: { type: Date, default: null },
     anonimizadoTs: { type: Date, default: null },
@@ -83,3 +84,8 @@ clienteSchema.index(
   { unique: true, partialFilterExpression: { correo: { $type: "string" } } },
 );
 clienteSchema.index({ empresaId: 1, nombre: 1 });
+// El código de referido es único por empresa (5.45). Parcial: los clientes sin código no chocan.
+clienteSchema.index(
+  { empresaId: 1, codigoReferido: 1 },
+  { unique: true, partialFilterExpression: { codigoReferido: { $type: "string" } } },
+);

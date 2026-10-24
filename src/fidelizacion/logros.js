@@ -69,7 +69,7 @@ export const INSIGNIAS = Object.freeze([
  * Devuelve { acumulado, consumos, canjes, nivel, insignias }. Cada insignia trae `obtenida` y, si la tiene,
  * `obtenidaTs` (el momento en que se cumplió, no cuándo se miró); si no, `actual` y `meta` para mostrar el avance.
  */
-export function calcularLogros({ movimientos, niveles = [], ahora = new Date() }) {
+export function calcularLogros({ movimientos, niveles = [], ahora = new Date(), incluirBonos = false }) {
   const lista = (Array.isArray(movimientos) ? movimientos : [])
     .map((m) => ({ tipo: m.tipo, puntos: m.puntos, ts: new Date(m.ts) }))
     .filter((m) => !Number.isNaN(m.ts.getTime()))
@@ -77,7 +77,9 @@ export function calcularLogros({ movimientos, niveles = [], ahora = new Date() }
 
   const consumos = lista.filter((m) => m.tipo === "acumulo");
   const canjes = lista.filter((m) => m.tipo === "canje");
-  const acumulado = consumos.reduce((n, m) => n + m.puntos, 0);
+  // Los `bono` (premio por referidos) suman a los puntos acumulados solo si la empresa lo decide; nunca cuentan como consumo.
+  const ganancias = incluirBonos ? lista.filter((m) => m.tipo === "acumulo" || m.tipo === "bono") : consumos;
+  const acumulado = ganancias.reduce((n, m) => n + m.puntos, 0);
 
   // El momento en que el acumulado (o la cuenta de consumos) llegó a la meta.
   const cuando = (lista, meta, valor) => {
@@ -95,7 +97,7 @@ export function calcularLogros({ movimientos, niveles = [], ahora = new Date() }
     let ts = null;
     if (def.medida === "puntos") {
       actual = acumulado;
-      ts = cuando(consumos, def.meta, (m) => m.puntos);
+      ts = cuando(ganancias, def.meta, (m) => m.puntos);
     } else if (def.medida === "consumos") {
       actual = consumos.length;
       ts = cuando(consumos, def.meta, () => 1);

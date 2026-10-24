@@ -38,7 +38,7 @@ const tiene = (v) => typeof v === "string" && v.trim() !== "";
  *     teléfono o el correo sean suyos: si ya existe una ficha con ese teléfono o correo, el registro se bloquea y se
  *     le pide acercarse al personal (así nadie se apropia de la ficha ni de los puntos de otro).
  */
-export function crearServicioCuentasCliente({ Empresa, Cliente, SesionCliente }, auth, clientes, fidelizacion, opciones = {}) {
+export function crearServicioCuentasCliente({ Empresa, Cliente, SesionCliente }, auth, clientes, fidelizacion, opciones = {}, referidos = null) {
   const cfg = {
     inactividadMs: opciones.inactividadMs ?? 7 * DIA,
     maximoMs: opciones.maximoMs ?? 30 * DIA,
@@ -233,7 +233,7 @@ export function crearServicioCuentasCliente({ Empresa, Cliente, SesionCliente },
    * Límite conocido: crear la ficha y su cuenta no es una operación única; si fallara entre las dos, la ficha queda
    * sin cuenta y el personal puede dársela con `crearCuenta`.
    */
-  async function registrar({ empresaId, nombre, telefono, correo, paisTelefono, password, quierePuntos = false, ip = null, agente = null }) {
+  async function registrar({ empresaId, nombre, telefono, correo, paisTelefono, password, quierePuntos = false, codigoReferido, ip = null, agente = null }) {
     const clave = ip ?? "?";
     const espera = porRegistro.espera(clave);
     if (espera > 0)
@@ -245,6 +245,15 @@ export function crearServicioCuentasCliente({ Empresa, Cliente, SesionCliente },
       validarPassword(password);
     } catch (e) {
       throw new ErrorCliente("DATOS_INVALIDOS", e.message);
+    }
+    // Código de un amigo (5.45): si el programa está activo y el código no existe se avisa antes de crear nada.
+    let conCodigo = null;
+    if (referidos && tiene(codigoReferido)) {
+      if ((await referidos.config({ empresaId })).habilitada) {
+        if (!(await referidos.buscarPorCodigo({ empresaId, codigo: codigoReferido })))
+          throw new ErrorCliente("DATOS_INVALIDOS", "ese código de referido no es válido");
+        conCodigo = codigoReferido;
+      }
     }
     const passwordHash = await hashPassword(password);
 
@@ -281,6 +290,14 @@ export function crearServicioCuentasCliente({ Empresa, Cliente, SesionCliente },
         otorgado: true,
         medio: "formulario",
       });
+    if (conCodigo) {
+      // La cuenta ya existe: si el vínculo falla (carrera, programa apagado hace un instante) no se pierde el registro.
+      try {
+        await referidos.vincular({ empresaId, referidoId: c.id, codigo: conCodigo, origen: "registro" });
+      } catch (e) {
+        console.error(`cuentas: no se pudo vincular el referido de ${c.id}`, e);
+      }
+    }
     const { token, sesion } = await crearSesion({ empresaId, clienteId: c.id, ip, agente });
     return { token, sesion: { id: String(sesion._id), expiraTs: sesion.expiraTs }, cliente: { id: c.id, nombre: c.nombre } };
   }
@@ -386,6 +403,7 @@ export function crearServicioCuentasCliente({ Empresa, Cliente, SesionCliente },
         debeCambiarPassword,
       },
       puntos,
+      ...(referidos ? { referidos: await referidos.mio({ empresaId, clienteId }) } : {}),
     };
   }
 
@@ -478,6 +496,7 @@ export function crearServicioCuentasCliente({ Empresa, Cliente, SesionCliente },
           paisTelefono: b.paisTelefono,
           password: b.password,
           quierePuntos: b.quierePuntos === true,
+          codigoReferido: b.codigoReferido,
           ...entrada(req),
         });
         res.setHeader("Set-Cookie", cookieDe(empresa.slug, r.token));

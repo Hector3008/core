@@ -338,6 +338,7 @@ export function crearServicioClientes({ Empresa, Cliente, SesionCliente }, auth)
       desactivadoTs: c.desactivadoTs ?? ts,
       anonimizadoTs: ts,
       cuenta: null, // sin cuenta: ya no puede entrar
+      codigoReferido: null, // libera el código de invitación (5.45)
     };
     for (const r of retiros)
       $set[`consentimientos.${r.finalidad}`] = { otorgado: false, ts, medio: r.medio, registradoPor };

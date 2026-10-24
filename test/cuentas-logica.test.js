@@ -20,7 +20,7 @@ const rechazaCliente = (p, codigo, status) => rechaza(p, ErrorCliente, codigo, s
 const rechazaAuth = (p, codigo, status) => rechaza(p, ErrorAuth, codigo, status);
 
 // ---------- almacenes falsos ----------
-function crearMundo(opciones = {}) {
+function crearMundo({ referidos = null, ...opciones } = {}) {
   let ahora = 1_800_000_000_000;
   let n = 0;
   const clientesDocs = [];
@@ -174,7 +174,7 @@ function crearMundo(opciones = {}) {
   const servicio = crearServicioCuentasCliente({ Empresa, Cliente, SesionCliente }, auth, clientes, fidelizacion, {
     ahora: () => ahora,
     ...opciones,
-  });
+  }, referidos);
   return {
     servicio,
     Cliente,
@@ -475,6 +475,40 @@ describe("auto-registro", () => {
     assert.equal(d.consentimientos.programaPuntos, null);
     assert.ok(await sesionDe(m, r.token));
     assert.equal((await login(m, "987111222", "Mi-clave-segura-1")).debeCambiarPassword, false);
+  });
+
+  it("con código de referido (5.45): lo vincula; código inválido se avisa antes de crear la ficha; apagado se ignora", async () => {
+    const vinculos = [];
+    let habilitada = true;
+    const referidos = {
+      config: async () => ({ habilitada }),
+      buscarPorCodigo: async ({ codigo }) => (codigo === "BUENCOD" ? { _id: "x" } : null),
+      vincular: async (a) => vinculos.push(a),
+    };
+    m = crearMundo({ referidos });
+    await assert.rejects(registrar({ codigoReferido: "MALCODE" }), (e) => e.codigo === "DATOS_INVALIDOS");
+    assert.equal(m.Cliente.docs.length, 0);
+    const r = await registrar({ codigoReferido: "BUENCOD" });
+    assert.equal(vinculos.length, 1);
+    assert.equal(vinculos[0].codigo, "BUENCOD");
+    assert.equal(vinculos[0].origen, "registro");
+    assert.equal(vinculos[0].referidoId, r.cliente.id);
+    habilitada = false;
+    await registrar({ telefono: "987333444", codigoReferido: "MALCODE" }); // apagado: no estorba
+    assert.equal(vinculos.length, 1);
+  });
+
+  it("si el vínculo falla después de crear la cuenta, el registro se conserva", async () => {
+    const referidos = { config: async () => ({ habilitada: true }), buscarPorCodigo: async () => ({}), vincular: async () => { throw new Error("boom"); } };
+    m = crearMundo({ referidos });
+    const orig = console.error;
+    console.error = () => {};
+    try {
+      const r = await registrar({ codigoReferido: "BUENCOD" });
+      assert.ok(r.token);
+    } finally {
+      console.error = orig;
+    }
   });
 
   it("con quierePuntos registra el consentimiento por formulario, a nombre del propio cliente", async () => {

@@ -152,11 +152,11 @@ describe("reglas de puntos (config.js)", () => {
   });
 
   it("configDe: lo guardado sobre los valores por defecto (empresas anteriores al campo)", () => {
-    assert.deepEqual(configDe({}), { habilitada: true, puntosPorUnidad: 1, niveles: [] });
-    assert.deepEqual(configDe(null), { habilitada: true, puntosPorUnidad: 1, niveles: [] });
-    assert.deepEqual(configDe({ fidelizacion: { habilitada: false } }), { habilitada: false, puntosPorUnidad: 1, niveles: [] });
-    assert.deepEqual(configDe({ fidelizacion: { puntosPorUnidad: 2 } }), { habilitada: true, puntosPorUnidad: 2, niveles: [] });
-    assert.deepEqual(configDe({ fidelizacion: { puntosPorUnidad: -3 } }), { habilitada: true, puntosPorUnidad: 1, niveles: [] });
+    assert.deepEqual(configDe({}), { habilitada: true, puntosPorUnidad: 1, niveles: [], referidos: { habilitada: false, puntosReferente: 50, puntosReferido: 25, consumoMinimo: 0, maxPorCliente: 20, cuentaParaNiveles: true } });
+    assert.deepEqual(configDe(null), { habilitada: true, puntosPorUnidad: 1, niveles: [], referidos: { habilitada: false, puntosReferente: 50, puntosReferido: 25, consumoMinimo: 0, maxPorCliente: 20, cuentaParaNiveles: true } });
+    assert.deepEqual(configDe({ fidelizacion: { habilitada: false } }), { habilitada: false, puntosPorUnidad: 1, niveles: [], referidos: { habilitada: false, puntosReferente: 50, puntosReferido: 25, consumoMinimo: 0, maxPorCliente: 20, cuentaParaNiveles: true } });
+    assert.deepEqual(configDe({ fidelizacion: { puntosPorUnidad: 2 } }), { habilitada: true, puntosPorUnidad: 2, niveles: [], referidos: { habilitada: false, puntosReferente: 50, puntosReferido: 25, consumoMinimo: 0, maxPorCliente: 20, cuentaParaNiveles: true } });
+    assert.deepEqual(configDe({ fidelizacion: { puntosPorUnidad: -3 } }), { habilitada: true, puntosPorUnidad: 1, niveles: [], referidos: { habilitada: false, puntosReferente: 50, puntosReferido: 25, consumoMinimo: 0, maxPorCliente: 20, cuentaParaNiveles: true } });
   });
 
   it("validarConfig: parcial, tipos y rangos, y campos desconocidos se rechazan", () => {
@@ -439,14 +439,14 @@ describe("configuración de la empresa", () => {
   it("leer da los valores por defecto; guardar exige gestionar y valida", async () => {
     const m = crearMundo();
     const cfg = (a) => conEmpresa(E1, () => m.servicio.guardarConfig({ empresaId: E1, actor: a, ...a.cambio }));
-    assert.deepEqual(await m.servicio.leerConfig({ empresaId: E1 }), { habilitada: true, puntosPorUnidad: 1, niveles: [] });
+    assert.deepEqual(await m.servicio.leerConfig({ empresaId: E1 }), { habilitada: true, puntosPorUnidad: 1, niveles: [], referidos: { habilitada: false, puntosReferente: 50, puntosReferido: 25, consumoMinimo: 0, maxPorCliente: 20, cuentaParaNiveles: true } });
     await rechaza(m.servicio.guardarConfig({ empresaId: E1, actor: MESERO, puntosPorUnidad: 2 }), "PERMISO_INSUFICIENTE", 403);
     await rechaza(m.servicio.guardarConfig({ empresaId: E1, actor: ADM, puntosPorUnidad: 0 }), "DATOS_INVALIDOS");
     const r = await m.servicio.guardarConfig({ empresaId: E1, actor: ADM, puntosPorUnidad: 2 });
-    assert.deepEqual(r, { habilitada: true, puntosPorUnidad: 2, niveles: [] });
+    assert.deepEqual(r, { habilitada: true, puntosPorUnidad: 2, niveles: [], referidos: { habilitada: false, puntosReferente: 50, puntosReferido: 25, consumoMinimo: 0, maxPorCliente: 20, cuentaParaNiveles: true } });
     m.pedido("PD-0000001", { total: 10 });
     assert.equal((await acumular(m, "PD-0000001")).acumulados, 20);
-    assert.deepEqual(await m.servicio.guardarConfig({ empresaId: E1, actor: ADM, habilitada: false }), { habilitada: false, puntosPorUnidad: 2, niveles: [] });
+    assert.deepEqual(await m.servicio.guardarConfig({ empresaId: E1, actor: ADM, habilitada: false }), { habilitada: false, puntosPorUnidad: 2, niveles: [], referidos: { habilitada: false, puntosReferente: 50, puntosReferido: 25, consumoMinimo: 0, maxPorCliente: 20, cuentaParaNiveles: true } });
     void cfg;
   });
 
