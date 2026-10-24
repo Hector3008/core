@@ -6,7 +6,9 @@ import { momentoLocal } from "../zona.js";
 // Todo el cálculo va en centavos enteros, como `calcularPuntos`; solo al final se devuelve en la unidad de la moneda.
 //
 //   evaluarPromociones({ lineas, promociones, ahora, zona })
-//     lineas:       [{ id?, codigo, categoria?, cantidad, precio }]   precio = de UNA unidad (sin promociones)
+//     lineas:       [{ id?, codigo, categoria?, cantidad, precio, ahora? }]   precio = de UNA unidad (sin promociones)
+//                   `ahora` (opcional, ISO o Date): cuándo se pidió esa línea. Su vigencia, día y horario se miran a esa
+//                   hora y no a la global: un ítem pedido en el happy hour lo conserva aunque el pedido se recalcule después.
 //     promociones:  las de la empresa, ya validadas ({ id, nombre, activa, prioridad, acumulable, tipo, objetivo,
 //                   disparador, n, m, efecto, valor, vigencia, dias, horario })
 //     ahora:        el instante (Date); zona: el nombre IANA de la empresa
@@ -73,11 +75,30 @@ export function evaluarPromociones({ lineas, promociones, ahora = new Date(), zo
   if (unidades.length > MAX_UNIDADES) throw new ErrorPromocion("DATOS_INVALIDOS", `demasiadas unidades en un pedido (hasta ${MAX_UNIDADES})`);
 
   // 2. Promociones vigentes, por prioridad (menor primero); a igual prioridad, el orden en que llegaron.
-  const vigentes = promociones
+  // Si alguna línea trae su propia hora (`ahora`), la vigencia se decide por unidad, a la hora de su línea; si no, es la
+  // de siempre: solo entran las vigentes ahora.
+  const momentos = lineas.map((l) => {
+    if (l?.ahora === undefined || l?.ahora === null) return momento;
+    const d = new Date(l.ahora);
+    if (Number.isNaN(d.getTime())) throw new ErrorPromocion("DATOS_INVALIDOS", "lineas: `ahora` debe ser una fecha y hora válida");
+    return momentoLocal(d, zona);
+  });
+  const horaPropia = lineas.some((l) => l?.ahora !== undefined && l?.ahora !== null);
+  const vigentesAhora = new Set(promociones.filter((p) => estaVigente(p, momento)));
+  const ordenadas = promociones
     .map((p, orden) => ({ p, orden }))
-    .filter(({ p }) => estaVigente(p, momento))
+    .filter(({ p }) => (horaPropia ? p.activa !== false : vigentesAhora.has(p)))
     .sort((a, b) => (a.p.prioridad ?? 100) - (b.p.prioridad ?? 100) || a.orden - b.orden)
     .map(({ p }) => p);
+  const vigentes = ordenadas;
+  const rigeCache = new Map();
+  const rige = (promo, li) => {
+    if (!horaPropia) return true;
+    let porLinea = rigeCache.get(promo);
+    if (!porLinea) rigeCache.set(promo, (porLinea = new Map()));
+    if (!porLinea.has(li)) porLinea.set(li, estaVigente(promo, momentos[li]));
+    return porLinea.get(li);
+  };
 
   // Una unidad que ya tiene una promoción solo admite otra si ambas son acumulables.
   const libre = (u, promo) => u.aplicadas.length === 0 || (promo.acumulable === true && u.soloAcumulables);
@@ -92,11 +113,11 @@ export function evaluarPromociones({ lineas, promociones, ahora = new Date(), zo
   for (const promo of vigentes) {
     if (promo.tipo === "directo") {
       for (const u of unidades) {
-        if (deLinea(promo.objetivo)(u) && libre(u, promo)) aplicar(u, promo, montoDe(promo.efecto, promo.valor, u.actual));
+        if (deLinea(promo.objetivo)(u) && rige(promo, u.li) && libre(u, promo)) aplicar(u, promo, montoDe(promo.efecto, promo.valor, u.actual));
       }
     } else if (promo.tipo === "nxm") {
       // Lleva n, paga m: en cada grupo de n unidades (de las más caras a las más baratas), las n−m más baratas son gratis.
-      const candidatas = unidades.filter((u) => deLinea(promo.objetivo)(u) && libre(u, promo)).sort((a, b) => b.actual - a.actual || a.orden - b.orden);
+      const candidatas = unidades.filter((u) => deLinea(promo.objetivo)(u) && rige(promo, u.li) && libre(u, promo)).sort((a, b) => b.actual - a.actual || a.orden - b.orden);
       const grupos = Math.floor(candidatas.length / promo.n);
       for (let g = 0; g < grupos; g++) {
         for (const u of candidatas.slice(g * promo.n, (g + 1) * promo.n).slice(promo.m)) aplicar(u, promo, u.actual);
@@ -104,8 +125,8 @@ export function evaluarPromociones({ lineas, promociones, ahora = new Date(), zo
     } else if (promo.tipo === "combo") {
       // Por cada unidad del disparador, una del objetivo (la más barata primero) lleva el descuento. Una misma unidad
       // no es a la vez disparador y objetivo de la misma aplicación: con «lleva 2 cafés, el 2.º a mitad» hacen falta dos.
-      const objetivos = unidades.filter((u) => deLinea(promo.objetivo)(u) && libre(u, promo)).sort((a, b) => a.actual - b.actual || a.orden - b.orden);
-      const disparadores = unidades.filter(deLinea(promo.disparador)).sort((a, b) => b.base - a.base || a.orden - b.orden);
+      const objetivos = unidades.filter((u) => deLinea(promo.objetivo)(u) && rige(promo, u.li) && libre(u, promo)).sort((a, b) => a.actual - b.actual || a.orden - b.orden);
+      const disparadores = unidades.filter((u) => deLinea(promo.disparador)(u) && rige(promo, u.li)).sort((a, b) => b.base - a.base || a.orden - b.orden);
       const usadas = new Set();
       for (const t of objetivos) {
         if (usadas.has(t)) continue;

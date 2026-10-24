@@ -262,3 +262,63 @@ describe("entradas raras y propiedades", () => {
     assert.doesNotThrow(() => ev([L("LATTE", MAX_UNIDADES, 1)], promos()));
   });
 });
+
+describe("hora propia de cada línea (5.42)", () => {
+  // Happy hour: de 18:00 a 21:00 en Lima. Jueves 20:00 = JUEVES_20H; jueves 21:30 = 02:30 UTC del viernes.
+  const HAPPY = P({ tipo: "directo", objetivo: item("LATTE"), efecto: "porcentaje", valor: 50, horario: { desde: "18:00", hasta: "21:00" } });
+  const T2000 = "2026-10-23T01:00:00Z";
+  const T2130 = "2026-10-23T02:30:00Z";
+  const con = (l, ahora) => ({ ...l, ahora });
+
+  it("una línea pedida dentro del horario lo conserva aunque se evalúe después, fuera de horario", () => {
+    const r = ev([con(L("LATTE", 1, 10, null, "a"), T2000), con(L("LATTE", 1, 10, null, "b"), T2130)], [HAPPY], new Date(T2130));
+    assert.equal(desc(r, "a"), 5);
+    assert.equal(desc(r, "b"), 0);
+  });
+
+  it("sin hora propia, el comportamiento no cambia: se mira la hora global", () => {
+    assert.equal(ev([L("LATTE", 1, 10)], [HAPPY], new Date(T2130)).descuentoTotal, 0);
+    assert.equal(ev([L("LATTE", 1, 10)], [HAPPY], new Date(T2000)).descuentoTotal, 5);
+  });
+
+  it("mezcla: una línea con hora propia y otra sin ella (esa usa la global)", () => {
+    const r = ev([con(L("LATTE", 1, 10, null, "a"), T2000), L("LATTE", 1, 10, null, "b")], [HAPPY], new Date(T2130));
+    assert.equal(desc(r, "a"), 5);
+    assert.equal(desc(r, "b"), 0);
+  });
+
+  it("2x1: solo cuentan las unidades pedidas mientras regía", () => {
+    const dosPorUno = dos({ objetivo: item("LATTE"), horario: { desde: "18:00", hasta: "21:00" } });
+    const dentro = ev([con(L("LATTE", 1, 10, null, "a"), T2000), con(L("LATTE", 1, 10, null, "b"), T2000)], [dosPorUno], new Date(T2130));
+    assert.equal(dentro.descuentoTotal, 10);
+    const mezcla = ev([con(L("LATTE", 1, 10, null, "a"), T2000), con(L("LATTE", 1, 10, null, "b"), T2130)], [dosPorUno], new Date(T2130));
+    assert.equal(mezcla.descuentoTotal, 0);
+  });
+
+  it("combo: tanto el disparador como el objetivo deben haberse pedido mientras regía", () => {
+    const combo = P({ tipo: "combo", disparador: item("TORTA"), objetivo: item("LATTE"), efecto: "gratis", horario: { desde: "18:00", hasta: "21:00" } });
+    const ok = ev([con(L("TORTA", 1, 8, null, "t"), T2000), con(L("LATTE", 1, 10, null, "l"), T2000)], [combo], new Date(T2130));
+    assert.equal(desc(ok, "l"), 10);
+    const tarde = ev([con(L("TORTA", 1, 8, null, "t"), T2000), con(L("LATTE", 1, 10, null, "l"), T2130)], [combo], new Date(T2130));
+    assert.equal(tarde.descuentoTotal, 0);
+    const disparadorTarde = ev([con(L("TORTA", 1, 8, null, "t"), T2130), con(L("LATTE", 1, 10, null, "l"), T2000)], [combo], new Date(T2130));
+    assert.equal(disparadorTarde.descuentoTotal, 0);
+  });
+
+  it("la vigencia por fechas también se mira a la hora de la línea", () => {
+    const hasta = P({ tipo: "directo", objetivo: item("LATTE"), efecto: "gratis", vigencia: { desde: null, hasta: "2026-10-22" } });
+    // Jueves 22 a las 20:00 en Lima entra; al día siguiente (viernes 23) ya no
+    const r = ev([con(L("LATTE", 1, 10, null, "a"), T2000), con(L("LATTE", 1, 10, null, "b"), "2026-10-24T01:00:00Z")], [hasta], new Date("2026-10-24T01:00:00Z"));
+    assert.equal(desc(r, "a"), 10);
+    assert.equal(desc(r, "b"), 0);
+  });
+
+  it("una promoción pausada no se aplica aunque la línea traiga su hora", () => {
+    const r = ev([con(L("LATTE", 1, 10), T2000)], [{ ...HAPPY, activa: false }], new Date(T2000));
+    assert.equal(r.descuentoTotal, 0);
+  });
+
+  it("una hora propia inválida se rechaza", () => {
+    assert.throws(() => ev([con(L("LATTE", 1, 10), "no-es-fecha")], [HAPPY]), (e) => e instanceof ErrorPromocion && e.codigo === "DATOS_INVALIDOS");
+  });
+});

@@ -26,6 +26,8 @@ Días y horarios se leen en la **zona horaria de la empresa**: `Empresa.zonaHora
 
 `evaluarPromociones({ lineas, promociones, ahora, zona })` es una función **pura** (sin base de datos ni reloj). `lineas`: `[{ id?, codigo, categoria?, cantidad, precio }]` (precio de **una** unidad, sin promociones).
 
+**Hora propia de cada línea (5.42).** Una línea puede traer `ahora` (cuándo se pidió). Entonces vigencia, día y horario se miran **por unidad, a la hora de su línea**, y no a la hora global: un ítem pedido en el happy hour lo conserva aunque el pedido se recalcule después. En un `nxm` solo cuentan las unidades pedidas mientras regía; en un `combo`, tanto el disparador como el objetivo. Sin `ahora` en ninguna línea el comportamiento es el de siempre (solo entran las promociones vigentes en el `ahora` global). Un `ahora` que no es una fecha válida da `DATOS_INVALIDOS`.
+
 1. Las líneas pasan a unidades sueltas (hasta 500): el descuento se reparte por unidad y cae en la línea que la tiene.
 2. Se toman las promociones vigentes por `prioridad` (a igual prioridad, el orden de llegada).
 3. Una unidad recibe **una sola promoción**, salvo que ambas sean `acumulable` (la segunda se calcula sobre lo que queda).
