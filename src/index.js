@@ -17,6 +17,8 @@ import { crearServicioReferidos } from "./referidos/index.js";
 import { crearServicioCuentasCliente } from "./cuentas/index.js";
 import { crearServicioPromociones } from "./promociones/index.js";
 import { montarRutasPromociones } from "./promociones/rutas.js";
+import { crearServicioAnuncios } from "./anuncios/index.js";
+import { montarRutasAnuncios } from "./anuncios/rutas.js";
 
 export {
   conEmpresa,
@@ -35,6 +37,7 @@ export { ErrorFidelizacion } from "./fidelizacion/errores.js";
 export { normalizarCodigoReferido } from "./referidos/index.js";
 export { calcularDescuento } from "./fidelizacion/beneficios.js";
 export { ErrorPromocion } from "./promociones/errores.js";
+export { ErrorAnuncio } from "./anuncios/errores.js";
 export { evaluarPromociones } from "./promociones/evaluador.js";
 export { ZONAS, zonaDeEmpresa, zonaValida } from "./zona.js";
 export { marcaPublica } from "./marca.js";
@@ -98,11 +101,13 @@ export function createCore({ connection, plugins = [], auth = {} } = {}) {
   core.referidos = crearServicioReferidos(core.modelos, core.fidelizacion, core.clientes, core.auth);
   core.cuentasCliente = crearServicioCuentasCliente(core.modelos, core.auth, core.clientes, core.fidelizacion, auth.cliente, core.referidos);
   core.promociones = crearServicioPromociones(core.modelos, core.auth);
+  core.anuncios = crearServicioAnuncios(core.modelos, core.auth);
   core.auth.montarRutas = (router) => montarRutas(router, core);
   core.empleados.montarRutas = (router) => montarRutasEmpleados(router, core);
   core.clientes.montarRutas = (router) => montarRutasClientes(router, core);
   core.catalogo.montarRutas = (router) => montarRutasCatalogo(router, core);
   core.promociones.montarRutas = (router) => montarRutasPromociones(router, core);
+  core.anuncios.montarRutas = (router) => montarRutasAnuncios(router, core);
 
   return core;
 }
