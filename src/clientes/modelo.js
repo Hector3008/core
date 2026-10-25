@@ -28,11 +28,25 @@ const historialSchema = new mongoose.Schema(
 // La cuenta propia del cliente final (arquitectura 5.25): usuario = su correo o su teléfono (los de la ficha).
 // Vive en la ficha de cada empresa; no es un Usuario global ni comparte sesión con el personal.
 // El hash no sale en ninguna consulta si no se pide con `.select("+cuenta.passwordHash")`.
+// Una identidad externa vinculada a la cuenta (5.51): hoy solo Google. `sub` es el identificador estable de la persona
+// en el proveedor; el correo que trajo se guarda solo para mostrarlo (el que manda es el de la ficha).
+const identidadSchema = new mongoose.Schema(
+  {
+    proveedor: { type: String, enum: ["google"], required: true },
+    sub: { type: String, required: true },
+    correo: { type: String, default: null },
+    vinculadaTs: { type: Date, required: true },
+  },
+  { _id: false },
+);
+
 const cuentaSchema = new mongoose.Schema(
   {
-    passwordHash: { type: String, select: false, required: true },
+    // Sin contraseña (null) cuando la persona solo entra con Google (5.51). El login por contraseña ya la rechaza.
+    passwordHash: { type: String, select: false, default: null },
     debeCambiarPassword: { type: Boolean, default: false }, // contraseña temporal dada por el personal
-    origen: { type: String, enum: ["personal", "autoregistro"], required: true },
+    origen: { type: String, enum: ["personal", "autoregistro", "google"], required: true },
+    identidades: { type: [identidadSchema], default: [] },
     creadaTs: { type: Date, required: true },
     ultimoAccesoTs: { type: Date, default: null },
   },
@@ -88,4 +102,9 @@ clienteSchema.index({ empresaId: 1, nombre: 1 });
 clienteSchema.index(
   { empresaId: 1, codigoReferido: 1 },
   { unique: true, partialFilterExpression: { codigoReferido: { $type: "string" } } },
+);
+// Una cuenta de Google se vincula a una sola ficha por empresa (5.51).
+clienteSchema.index(
+  { empresaId: 1, "cuenta.identidades.sub": 1 },
+  { unique: true, partialFilterExpression: { "cuenta.identidades.sub": { $type: "string" } } },
 );

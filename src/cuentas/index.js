@@ -9,6 +9,7 @@ import { crearLimitador } from "../auth/limitador.js";
 import { validarPassword } from "../auth/politica-password.js";
 import { generarPasswordTemporal } from "../empleados/validacion.js";
 import { ErrorCliente } from "../clientes/errores.js";
+import { crearVerificadorGoogle } from "./google.js";
 
 const MIN = 60_000;
 const HORA = 60 * MIN;
@@ -51,6 +52,13 @@ export function crearServicioCuentasCliente({ Empresa, Cliente, SesionCliente },
   const porIp = crearLimitador({ max: opciones.intentosPorIp ?? 30, ventanaMs, ahora: cfg.ahora });
   const porCambioPassword = crearLimitador({ max: 5, ventanaMs, ahora: cfg.ahora });
   const porRegistro = crearLimitador({ max: opciones.registrosPorIp ?? 10, ventanaMs: HORA, ahora: cfg.ahora });
+  const porGoogle = crearLimitador({ max: opciones.googleFallosPorIp ?? 20, ventanaMs, ahora: cfg.ahora });
+
+  // Entrar con Google (5.51): el Client ID viene de `opciones.google.clientId` o de la variable GOOGLE_CLIENT_ID.
+  // Sin él la función no está disponible (la carta no ofrece el botón). `opciones.google.verificador` permite probar.
+  const clienteIdGoogle = (opciones.google?.clientId ?? process.env.GOOGLE_CLIENT_ID ?? "").trim() || null;
+  const verificadorGoogle =
+    opciones.google?.verificador ?? (clienteIdGoogle ? crearVerificadorGoogle({ clientId: clienteIdGoogle, ahora: cfg.ahora }) : null);
 
   // Hash de mentira para gastar el mismo tiempo cuando el usuario no existe (ver login).
   let hashFalso = null;
@@ -302,6 +310,119 @@ export function crearServicioCuentasCliente({ Empresa, Cliente, SesionCliente },
     return { token, sesion: { id: String(sesion._id), expiraTs: sesion.expiraTs }, cliente: { id: c.id, nombre: c.nombre } };
   }
 
+  // ---------- entrar con Google (5.51) ----------
+  /**
+   * El cliente entra (o crea su cuenta) con una cuenta de Google. `credencial` es el ID token que entrega el botón de
+   * Google. Como Google comprueba que el correo es de la persona, aquí SÍ se puede unir a una ficha existente sin pasar
+   * por el personal (el registro con contraseña no puede: nadie verifica el correo escrito).
+   *
+   *   1. Ya hay una ficha vinculada a ese `sub` de Google → entra.
+   *   2. Hay una ficha con ese correo → se le vincula Google (si no tenía cuenta, se le crea una sin contraseña; si la
+   *      tenía, conserva su contraseña). Una ficha ya vinculada a OTRA cuenta de Google no se pisa: ESTADO_INVALIDO.
+   *   3. No hay ficha → se crea con el nombre y el correo de Google. `quierePuntos` y `codigoReferido` solo valen aquí
+   *      (ficha nueva): una ficha existente no cambia su consentimiento por un clic en el botón.
+   * Una ficha desactivada o anonimizada no entra ni se reutiliza. Límite: una ficha que solo tiene teléfono (sin
+   * correo) no se puede unir por esta vía; el personal le agrega el correo o ella crea una cuenta nueva.
+   */
+  async function entrarConGoogle({ empresaId, credencial, quierePuntos = false, codigoReferido, ip = null, agente = null }) {
+    if (!verificadorGoogle) throw new ErrorAuth("GOOGLE_NO_DISPONIBLE", "entrar con Google no está activado");
+    const espera = ip ? porGoogle.espera(ip) : 0;
+    if (espera > 0)
+      throw new ErrorAuth("DEMASIADOS_INTENTOS", "demasiados intentos, espera un momento", { reintentarEnSeg: espera });
+    await paisDe(empresaId); // la empresa existe y está activa
+    let g;
+    try {
+      g = await verificadorGoogle.verificar(credencial);
+    } catch (e) {
+      if (ip && e instanceof ErrorAuth && e.codigo === "GOOGLE_INVALIDO") porGoogle.fallo(ip);
+      throw e;
+    }
+    const identidad = { proveedor: "google", sub: g.sub, correo: g.correo, vinculadaTs: new Date(cfg.ahora()) };
+    const estaInactiva = (c) => c.activo === false || !!c.anonimizadoTs;
+    const bloqueada = () =>
+      new ErrorCliente("ESTADO_INVALIDO", "Esta cuenta está desactivada. Acércate al personal.");
+
+    let creada = false;
+    let clienteId = null;
+    let nombre = null;
+    // Una segunda pasada cubre la carrera de dos primeras entradas simultáneas (la segunda ve la ficha de la primera).
+    for (let pasada = 0; pasada < 2 && !clienteId; pasada++) {
+      const porSub = await conEmpresa(empresaId, async () => await Cliente.findOne({ "cuenta.identidades.sub": g.sub }).lean());
+      if (porSub) {
+        if (estaInactiva(porSub)) throw bloqueada();
+        clienteId = String(porSub._id);
+        nombre = porSub.nombre;
+        break;
+      }
+      const porCorreo = await conEmpresa(empresaId, async () => await Cliente.findOne({ correo: g.correo }).lean());
+      if (porCorreo) {
+        if (estaInactiva(porCorreo)) throw bloqueada();
+        const id = String(porCorreo._id);
+        const r = await conEmpresa(empresaId, async () =>
+          porCorreo.cuenta
+            ? await Cliente.updateOne(
+                { _id: id, activo: true, anonimizadoTs: null, "cuenta.identidades.proveedor": { $ne: "google" } },
+                { $push: { "cuenta.identidades": identidad } },
+              )
+            : await Cliente.updateOne(
+                { _id: id, activo: true, anonimizadoTs: null, cuenta: null },
+                { $set: { cuenta: { debeCambiarPassword: false, origen: "google", creadaTs: new Date(cfg.ahora()), identidades: [identidad] } } },
+              ),
+        );
+        if (!r.matchedCount) {
+          // O ya está vinculada a otra cuenta de Google, o alguien le creó la cuenta justo ahora: se relee una vez.
+          if (pasada === 0) continue;
+          throw new ErrorCliente("ESTADO_INVALIDO", "Esta ficha ya está vinculada a otra cuenta de Google. Acércate al personal.");
+        }
+        clienteId = id;
+        nombre = porCorreo.nombre;
+        break;
+      }
+      // Ficha nueva. Si trae código de un amigo y no existe, se avisa antes de crear nada (igual que el registro).
+      let conCodigo = null;
+      if (referidos && tiene(codigoReferido)) {
+        if ((await referidos.config({ empresaId })).habilitada) {
+          if (!(await referidos.buscarPorCodigo({ empresaId, codigo: codigoReferido })))
+            throw new ErrorCliente("DATOS_INVALIDOS", "ese código de referido no es válido");
+          conCodigo = codigoReferido;
+        }
+      }
+      let c;
+      try {
+        c = await clientes.crear({ empresaId, actor: ACTOR_REGISTRO, nombre: g.nombre ?? g.correo.split("@")[0], correo: g.correo });
+      } catch (e) {
+        if (e instanceof ErrorCliente && e.codigo === "CLIENTE_DUPLICADO" && pasada === 0) continue; // carrera: otra petición la creó
+        throw e;
+      }
+      await conEmpresa(empresaId, async () =>
+        await Cliente.updateOne(
+          { _id: c.id },
+          { $set: { cuenta: { debeCambiarPassword: false, origen: "google", creadaTs: new Date(cfg.ahora()), identidades: [identidad] } } },
+        ),
+      );
+      if (quierePuntos === true)
+        await clientes.cambiarConsentimiento({
+          empresaId, actor: ACTOR_CONSENTIMIENTO_PROPIO, clienteId: c.id, finalidad: "programaPuntos", otorgado: true, medio: "formulario",
+        });
+      if (conCodigo) {
+        try {
+          await referidos.vincular({ empresaId, referidoId: c.id, codigo: conCodigo, origen: "registro" });
+        } catch (e) {
+          console.error(`cuentas: no se pudo vincular el referido de ${c.id}`, e);
+        }
+      }
+      creada = true;
+      clienteId = c.id;
+      nombre = c.nombre;
+    }
+    if (!clienteId) throw new ErrorCliente("ESTADO_INVALIDO", "No se pudo entrar con Google. Intenta de nuevo.");
+    await conEmpresa(empresaId, async () =>
+      await Cliente.updateOne({ _id: clienteId }, { $set: { "cuenta.ultimoAccesoTs": new Date(cfg.ahora()) } }),
+    );
+    const { token, sesion } = await crearSesion({ empresaId, clienteId, ip, agente });
+    return { token, sesion: { id: String(sesion._id), expiraTs: sesion.expiraTs }, cliente: { id: clienteId, nombre }, creada };
+  }
+
   // ---------- entrar y salir ----------
   async function login({ empresaId, usuario, password, ip = null, agente = null }) {
     if (
@@ -356,6 +477,8 @@ export function crearServicioCuentasCliente({ Empresa, Cliente, SesionCliente },
     if (espera > 0)
       throw new ErrorAuth("DEMASIADOS_INTENTOS", "demasiados intentos, espera un momento", { reintentarEnSeg: espera });
     const c = await conEmpresa(empresaId, async () => await Cliente.findById(clienteId).select("+cuenta.passwordHash").lean());
+    if (c?.cuenta && !c.cuenta.passwordHash)
+      throw new ErrorAuth("SIN_PASSWORD", "tu cuenta entra con Google y no tiene contraseña");
     if (!c?.cuenta?.passwordHash || !(await verificarPassword(passwordActual, c.cuenta.passwordHash))) {
       porCambioPassword.fallo(clave);
       throw new ErrorAuth("CREDENCIALES_INVALIDAS", "contraseña actual incorrecta");
@@ -466,6 +589,7 @@ export function crearServicioCuentasCliente({ Empresa, Cliente, SesionCliente },
    * (el servicio que los monta la saca de su ruta, por ejemplo del slug) y devuelve `{ id, slug }`.
    *   registro      POST  { nombre, telefono?, correo?, password, quierePuntos? }   → 201, abre la sesión
    *   login         POST  { usuario, password }                                      → 200, abre la sesión
+   *   google        POST  { credencial, quierePuntos?, codigoReferido? }             → 201 (cuenta nueva) o 200, abre la sesión (5.51)
    *   logout        POST                                                             → 200
    *   yo            GET   → { sesion: false } sin sesión, o { sesion: true, cliente, puntos }
    *   password      POST  { passwordActual, passwordNueva }
@@ -512,6 +636,18 @@ export function crearServicioCuentasCliente({ Empresa, Cliente, SesionCliente },
         res.setHeader("Set-Cookie", cookieDe(empresa.slug, r.token));
         res.status(200).json(await yo({ empresaId: empresa.id, clienteId: r.cliente.id, debeCambiarPassword: r.debeCambiarPassword }));
       }),
+      google: envolver(true, async (req, res, empresa) => {
+        const b = req.body ?? {};
+        const r = await entrarConGoogle({
+          empresaId: empresa.id,
+          credencial: b.credencial,
+          quierePuntos: b.quierePuntos === true,
+          codigoReferido: b.codigoReferido,
+          ...entrada(req),
+        });
+        res.setHeader("Set-Cookie", cookieDe(empresa.slug, r.token));
+        res.status(r.creada ? 201 : 200).json(await yo({ empresaId: empresa.id, clienteId: r.cliente.id }));
+      }),
       logout: envolver(true, async (req, res, empresa) => {
         await cerrarSesion({ empresaId: empresa.id, token: leerCookie(req.headers?.cookie, cookieNombre(empresa.slug)) });
         res.setHeader("Set-Cookie", cookieBorrada(empresa.slug));
@@ -519,7 +655,8 @@ export function crearServicioCuentasCliente({ Empresa, Cliente, SesionCliente },
       }),
       yo: envolver(false, async (req, res, empresa) => {
         const r = await sesionOpcional(req, res, empresa);
-        if (!r) return res.status(200).json({ sesion: false });
+        // `google` (solo si está activado) le dice a la carta que puede ofrecer el botón; el Client ID es público.
+        if (!r) return res.status(200).json(clienteIdGoogle ? { sesion: false, google: { clientId: clienteIdGoogle } } : { sesion: false });
         res.status(200).json(
           await yo({ empresaId: empresa.id, clienteId: String(r.sesion.clienteId), debeCambiarPassword: !!r.sesion.$locals.cliente.cuenta?.debeCambiarPassword }),
         );
@@ -592,6 +729,8 @@ export function crearServicioCuentasCliente({ Empresa, Cliente, SesionCliente },
     restablecerPassword,
     registrar,
     login,
+    entrarConGoogle,
+    googleDisponible: () => !!verificadorGoogle,
     cambiarPassword,
     cambiarMiConsentimiento,
     yo,
