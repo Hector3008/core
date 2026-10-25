@@ -224,6 +224,10 @@ describe("entrar con Google: ficha nueva", () => {
     await m.entrar({}, { name: undefined, email: "juan.perez@gmail.com", sub: "g-2" });
     assert.equal(m.Cliente.docs[0].nombre, "juan.perez");
   });
+  it("un nombre de Google más largo que el máximo de la ficha (80) se recorta en vez de impedir entrar", async () => {
+    await m.entrar({}, { name: "A".repeat(100) });
+    assert.equal(m.Cliente.docs[0].nombre, "A".repeat(80));
+  });
   it("quierePuntos registra el consentimiento de programaPuntos", async () => {
     await m.entrar({ quierePuntos: true });
     assert.equal(m.Cliente.docs[0].consentimientos.programaPuntos.otorgado, true);

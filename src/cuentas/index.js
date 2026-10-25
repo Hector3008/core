@@ -9,6 +9,7 @@ import { crearLimitador } from "../auth/limitador.js";
 import { validarPassword } from "../auth/politica-password.js";
 import { generarPasswordTemporal } from "../empleados/validacion.js";
 import { ErrorCliente } from "../clientes/errores.js";
+import { validarNombre } from "../clientes/validacion.js";
 import { crearVerificadorGoogle } from "./google.js";
 
 const MIN = 60_000;
@@ -21,6 +22,8 @@ const CORREO = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // `core.clientes` los comprueban. Solo se usan en estas dos operaciones y solo sobre la ficha recién creada
 // o la propia (nunca sobre otra persona).
 const ACTOR_REGISTRO = Object.freeze({ usuarioId: null, permisos: Object.freeze(["cliente:crear"]) });
+// Para que el cliente corrija su propio nombre (solo ese campo; ver `cambiarMiNombre`).
+const ACTOR_EDICION_PROPIA = Object.freeze({ usuarioId: null, permisos: Object.freeze(["cliente:editar"]) });
 const ACTOR_CONSENTIMIENTO_PROPIO = Object.freeze({ usuarioId: null, permisos: Object.freeze(["cliente:gestionar"]) });
 
 const tiene = (v) => typeof v === "string" && v.trim() !== "";
@@ -389,7 +392,7 @@ export function crearServicioCuentasCliente({ Empresa, Cliente, SesionCliente },
       }
       let c;
       try {
-        c = await clientes.crear({ empresaId, actor: ACTOR_REGISTRO, nombre: g.nombre ?? g.correo.split("@")[0], correo: g.correo });
+        c = await clientes.crear({ empresaId, actor: ACTOR_REGISTRO, nombre: (g.nombre ?? g.correo.split("@")[0]).slice(0, 80), correo: g.correo });
       } catch (e) {
         if (e instanceof ErrorCliente && e.codigo === "CLIENTE_DUPLICADO" && pasada === 0) continue; // carrera: otra petición la creó
         throw e;
@@ -509,6 +512,16 @@ export function crearServicioCuentasCliente({ Empresa, Cliente, SesionCliente },
       medio: "formulario",
     });
     return { programaPuntos: otorgado };
+  }
+
+  /**
+   * El cliente cambia, él mismo, el nombre de su ficha (el que ve el personal al buscarlo). Sobre su propia ficha
+   * (el `clienteId` sale de su sesión). Solo toca el nombre: lo demás de la ficha lo corrige el personal.
+   */
+  async function cambiarMiNombre({ empresaId, clienteId, nombre }) {
+    const limpio = validarNombre(nombre);
+    await clientes.actualizar({ empresaId, actor: ACTOR_EDICION_PROPIA, clienteId, nombre: limpio });
+    return { nombre: limpio };
   }
 
   /** Lo que ve el cliente de sí mismo: su ficha mínima, su consentimiento, y sus puntos y movimientos. */
@@ -673,6 +686,11 @@ export function crearServicioCuentasCliente({ Empresa, Cliente, SesionCliente },
           }),
         );
       }),
+      nombre: envolver(true, async (req, res, empresa) => {
+        const { sesion } = await sesionRequerida(req, res, empresa);
+        await cambiarMiNombre({ empresaId: empresa.id, clienteId: String(sesion.clienteId), nombre: req.body?.nombre });
+        res.status(200).json(await yo({ empresaId: empresa.id, clienteId: String(sesion.clienteId), debeCambiarPassword: !!sesion.$locals.cliente.cuenta?.debeCambiarPassword }));
+      }),
       consentimiento: envolver(true, async (req, res, empresa) => {
         const { sesion } = await sesionRequerida(req, res, empresa);
         res.status(200).json(
@@ -732,6 +750,7 @@ export function crearServicioCuentasCliente({ Empresa, Cliente, SesionCliente },
     entrarConGoogle,
     googleDisponible: () => !!verificadorGoogle,
     cambiarPassword,
+    cambiarMiNombre,
     cambiarMiConsentimiento,
     yo,
     crearSesion,

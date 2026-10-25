@@ -30,7 +30,7 @@ El botón de Google entrega un **ID token** (JWT). `crearVerificadorGoogle` (`sr
 - Límites: una ficha que solo tiene teléfono no se une por esta vía; el correo de la ficha lo pudo escribir el personal (si estaba mal, la dueña de ese Gmail entraría a esa ficha); no hay «desvincular Google» ni mostrar el método en la ficha.
 
 ## Manejadores (`core.cuentasCliente.manejadores({ empresaDe })`)
-`registro`, `login`, `google`, `logout`, `yo` (GET: `{ sesion: false }` o `{ sesion: true, cliente, puntos }`), `password`, `consentimiento` (PUT `{ otorgado }`). Los que escriben exigen `x-requested-with`. Del personal: `manejadoresPersonal.{crearCuenta, restablecerPassword}`, montados por `core.clientes.montarRutas`.
+`registro`, `login`, `google`, `logout`, `yo` (GET: `{ sesion: false }` o `{ sesion: true, cliente, puntos }`), `password`, `nombre` (PUT `{ nombre }`: el cliente corrige el nombre de su propia ficha, 1 a 80 caracteres; devuelve lo mismo que `yo`; solo toca el nombre y el `clienteId` sale de la sesión, nunca del cuerpo), `consentimiento` (PUT `{ otorgado }`). Los que escriben exigen `x-requested-with`. Del personal: `manejadoresPersonal.{crearCuenta, restablecerPassword}`, montados por `core.clientes.montarRutas`.
 
 ## Límites conocidos
 Sin verificación de contacto ni recuperación por correo o teléfono (la restablece el personal); límites de intentos en memoria; `registrar` (ficha + cuenta) no es una sola operación; que un registro sea bloqueado revela que existe una ficha con ese dato (mitigado por el límite por IP).
