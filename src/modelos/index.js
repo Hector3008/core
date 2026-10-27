@@ -16,6 +16,7 @@ import { sesionClienteSchema } from "../cuentas/modelo.js";
 import { movimientoPuntosSchema, beneficioSchema, ticketSchema, retoSchema } from "../fidelizacion/modelo.js";
 import { promocionSchema } from "../promociones/modelo.js";
 import { anuncioSchema } from "../anuncios/modelo.js";
+import { resenaSchema } from "../resenas/modelo.js";
 import { referidoSchema } from "../referidos/modelo.js";
 
 // core.model(nombre, schema, coleccion?) ya existe en la pieza 1
@@ -45,6 +46,7 @@ export function registrarModelos(core) {
     Reto: core.model("Reto", retoSchema, "retos"),
     Promocion: core.model("Promocion", promocionSchema, "promociones"),
     Anuncio: core.model("Anuncio", anuncioSchema, "anuncios"),
+    Resena: core.model("Resena", resenaSchema, "resenas"),
     Referido: core.model("Referido", referidoSchema, "referidos"),
   };
 }

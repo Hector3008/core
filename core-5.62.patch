@@ -1,0 +1,891 @@
+diff --git a/docs/resenas.md b/docs/resenas.md
+new file mode 100644
+index 0000000..ca2c572
+--- /dev/null
++++ b/docs/resenas.md
+@@ -0,0 +1,30 @@
++# Reseñas de platos (`core.resenas`, 5.62)
++
++Estrellas (1 a 5) y texto (hasta 500 caracteres, opcional) de un cliente con cuenta sobre un plato del catálogo **que ya pagó**. Sin imágenes ni video.
++
++## Reglas
++- **Quién opina:** solo quien tiene el plato en un pedido pagado. El núcleo no conoce los pedidos: el servicio que los lleva registra la comprobación con `core.resenas.definirFuenteConsumo(async ({ empresaId, clienteId, itemCodigo }) => boolean)`. Sin esa función nadie puede reseñar (falla cerrado, `ESTADO_INVALIDO`).
++- **Una por cliente y plato** (índice único `empresaId + itemClave + clienteId`); enviar de nuevo la edita. El cliente puede borrarla.
++- **Se publica al instante.** Un cliente con cuenta puede reportar la de otro (una vez; no la propia). El personal con `resena:gestionar` la **oculta** (nunca se borra) o la vuelve a mostrar (esto limpia sus reportes). Una reseña oculta sigue oculta aunque su autor la edite. Su autor aún la ve marcada como oculta.
++- **Autor:** «María P.» (primer nombre + inicial del último apellido), calculado al leer desde la ficha: un nombre editado o una ficha anonimizada («Anónimo») se reflejan solos.
++- El código del plato no distingue mayúsculas (igual que el catálogo). Un plato dado de baja no se reseña, y sus reseñas anteriores se siguen mostrando.
++
++## Operaciones
++| Operación | Quién | Qué |
++|---|---|---|
++| `guardarMia({empresaId, clienteId, itemCodigo, estrellas, texto?})` | cliente (id de la sesión) | crea o edita; `NO_PERMITIDO` si no lo pagó |
++| `borrarMia({empresaId, clienteId, itemCodigo})` | cliente | borra la suya |
++| `reportar({empresaId, clienteId, resenaId})` | cliente | suma un reporte |
++| `deItem({empresaId, itemCodigo, clienteId?, limite=20, saltar=0})` | público | `{ total, promedio, resenas: [{id, autor, estrellas, texto, ts, mia}], mia }` (solo visibles; `mia` incluye la propia aunque esté oculta) |
++| `listar({empresaId, actor, filtro, limite, saltar})` | `resena:leer` | todas, `reportadas` u `ocultas`; con reportes primero |
++| `moderar({empresaId, actor, resenaId, oculta})` | `resena:gestionar` | oculta o muestra |
++
++Las operaciones del cliente no llevan actor: el servicio que las monta debe pasar el `clienteId` de la **sesión**, nunca uno del cuerpo.
++
++## Permisos y rutas (personal)
++`resena:leer`, `resena:gestionar` (los cubre `*`). `core.resenas.montarRutas(router)`: `GET /` (`?filtro=todas|reportadas|ocultas&limite=&saltar=`) y `PUT /:resenaId/visibilidad` `{ oculta }` (CSRF).
++
++## Errores (`ErrorResena`)
++`DATOS_INVALIDOS` 400, `PERMISO_INSUFICIENTE` 403, `NO_PERMITIDO` 403, `NO_ENCONTRADO` 404, `ESTADO_INVALIDO` 409.
++
++Pruebas: `test/resenas-servicio.test.js` (24, sin base de datos).
+diff --git a/src/index.js b/src/index.js
+index 650cf18..e39c150 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -19,6 +19,8 @@ import { crearServicioPromociones } from "./promociones/index.js";
+ import { montarRutasPromociones } from "./promociones/rutas.js";
+ import { crearServicioAnuncios } from "./anuncios/index.js";
+ import { montarRutasAnuncios } from "./anuncios/rutas.js";
++import { crearServicioResenas } from "./resenas/index.js";
++import { montarRutasResenas } from "./resenas/rutas.js";
+ 
+ export {
+   conEmpresa,
+@@ -38,6 +40,7 @@ export { normalizarCodigoReferido } from "./referidos/index.js";
+ export { calcularDescuento } from "./fidelizacion/beneficios.js";
+ export { ErrorPromocion } from "./promociones/errores.js";
+ export { ErrorAnuncio } from "./anuncios/errores.js";
++export { ErrorResena } from "./resenas/errores.js";
+ export { evaluarPromociones } from "./promociones/evaluador.js";
+ export { ZONAS, zonaDeEmpresa, zonaValida } from "./zona.js";
+ export { marcaPublica } from "./marca.js";
+@@ -102,12 +105,14 @@ export function createCore({ connection, plugins = [], auth = {} } = {}) {
+   core.cuentasCliente = crearServicioCuentasCliente(core.modelos, core.auth, core.clientes, core.fidelizacion, auth.cliente, core.referidos);
+   core.promociones = crearServicioPromociones(core.modelos, core.auth);
+   core.anuncios = crearServicioAnuncios(core.modelos, core.auth);
++  core.resenas = crearServicioResenas(core.modelos, core.auth);
+   core.auth.montarRutas = (router) => montarRutas(router, core);
+   core.empleados.montarRutas = (router) => montarRutasEmpleados(router, core);
+   core.clientes.montarRutas = (router) => montarRutasClientes(router, core);
+   core.catalogo.montarRutas = (router) => montarRutasCatalogo(router, core);
+   core.promociones.montarRutas = (router) => montarRutasPromociones(router, core);
+   core.anuncios.montarRutas = (router) => montarRutasAnuncios(router, core);
++  core.resenas.montarRutas = (router) => montarRutasResenas(router, core);
+ 
+   return core;
+ }
+diff --git a/src/modelos/index.js b/src/modelos/index.js
+index 1b34ea7..7c6d33a 100644
+--- a/src/modelos/index.js
++++ b/src/modelos/index.js
+@@ -16,6 +16,7 @@ import { sesionClienteSchema } from "../cuentas/modelo.js";
+ import { movimientoPuntosSchema, beneficioSchema, ticketSchema, retoSchema } from "../fidelizacion/modelo.js";
+ import { promocionSchema } from "../promociones/modelo.js";
+ import { anuncioSchema } from "../anuncios/modelo.js";
++import { resenaSchema } from "../resenas/modelo.js";
+ import { referidoSchema } from "../referidos/modelo.js";
+ 
+ // core.model(nombre, schema, coleccion?) ya existe en la pieza 1
+@@ -45,6 +46,7 @@ export function registrarModelos(core) {
+     Reto: core.model("Reto", retoSchema, "retos"),
+     Promocion: core.model("Promocion", promocionSchema, "promociones"),
+     Anuncio: core.model("Anuncio", anuncioSchema, "anuncios"),
++    Resena: core.model("Resena", resenaSchema, "resenas"),
+     Referido: core.model("Referido", referidoSchema, "referidos"),
+   };
+ }
+diff --git a/src/resenas/errores.js b/src/resenas/errores.js
+new file mode 100644
+index 0000000..fc029d7
+--- /dev/null
++++ b/src/resenas/errores.js
+@@ -0,0 +1,20 @@
++// Errores de las reseñas (5.62). `codigo` identifica el caso y `status` es el HTTP que le toca.
++//   DATOS_INVALIDOS 400   PERMISO_INSUFICIENTE 403   NO_PERMITIDO 403 (el cliente no pidió ni pagó ese plato)
++//   NO_ENCONTRADO 404     ESTADO_INVALIDO 409 (reseñas sin configurar o acción que no corresponde)
++const STATUS = {
++  DATOS_INVALIDOS: 400,
++  PERMISO_INSUFICIENTE: 403,
++  NO_PERMITIDO: 403,
++  NO_ENCONTRADO: 404,
++  ESTADO_INVALIDO: 409,
++};
++
++export class ErrorResena extends Error {
++  constructor(codigo, mensaje, detalle) {
++    super(mensaje);
++    this.name = "ErrorResena";
++    this.codigo = codigo;
++    this.status = STATUS[codigo] ?? 400;
++    if (detalle) this.detalle = detalle;
++  }
++}
+diff --git a/src/resenas/index.js b/src/resenas/index.js
+new file mode 100644
+index 0000000..6c225a1
+--- /dev/null
++++ b/src/resenas/index.js
+@@ -0,0 +1,264 @@
++import { conEmpresa } from "../tenancy.js";
++import { permite } from "../permisos.js";
++import { ErrorAuth } from "../auth/errores.js";
++import { ErrorResena } from "./errores.js";
++import { claveDe, nombrePublico, promedioDe, validarResena } from "./validacion.js";
++
++const ID = /^[0-9a-f]{24}$/i;
++const FILTROS = ["todas", "reportadas", "ocultas"];
++const MAX_REPORTES_GUARDADOS = 200;
++
++/**
++ * Reseñas de platos (arquitectura 5.62): estrellas y texto, solo de quien ya pagó el plato.
++ *
++ * Reglas (decisiones de Héctor, 26 de octubre):
++ *  - Solo opina quien tiene el plato en un pedido pagado. Quién pagó qué lo sabe el servicio que lleva los pedidos
++ *    (tobt), no el núcleo: se le pregunta con `definirFuenteConsumo(async ({ empresaId, clienteId, itemCodigo }) => boolean)`.
++ *    Sin esa función no se puede reseñar (falla cerrado).
++ *  - Una reseña por cliente y plato, que el cliente puede editar y borrar.
++ *  - Se publica al instante. Cualquier cliente con cuenta puede reportar la de otro; el personal con `resena:gestionar`
++ *    la oculta (nunca se borra) o la vuelve a mostrar (eso limpia sus reportes). Una oculta no se arregla editándola.
++ *  - El autor se muestra como «María P.» y se calcula al leer, desde la ficha del cliente.
++ *
++ * Permisos del personal (la operación los comprueba aunque la ruta no lo haga):
++ *   resena:leer       → ver las reseñas de la empresa, también las ocultas y los reportes
++ *   resena:gestionar  → ocultarlas y volver a mostrarlas
++ * Las operaciones del cliente (`guardarMia`, `borrarMia`, `reportar`, `deItem`) no llevan actor: el servicio que las
++ * monta debe pasar el `clienteId` de la SESIÓN del cliente, nunca uno que mande el cuerpo.
++ */
++export function crearServicioResenas({ Resena, Cliente, Item }, auth) {
++  let fuenteConsumo = null;
++
++  const sinActor = () => new ErrorResena("PERMISO_INSUFICIENTE", "se requiere quién realiza la operación");
++  const exigir = (actor, permiso) => {
++    if (!actor || !Array.isArray(actor.permisos)) throw sinActor();
++    if (!permite(actor.permisos, permiso)) throw new ErrorResena("PERMISO_INSUFICIENTE", `permiso insuficiente (${permiso})`);
++  };
++  const exigirVer = (actor) => {
++    if (!actor || !Array.isArray(actor.permisos)) throw sinActor();
++    if (!permite(actor.permisos, "resena:leer") && !permite(actor.permisos, "resena:gestionar"))
++      throw new ErrorResena("PERMISO_INSUFICIENTE", "permiso insuficiente (resena:leer)");
++  };
++  const idValido = (v, nombre) => {
++    if (!ID.test(String(v ?? ""))) throw new ErrorResena("DATOS_INVALIDOS", `${nombre} inválido`);
++  };
++  const codigoValido = (c) => {
++    const k = claveDe(c);
++    if (!k || k.length > 60) throw new ErrorResena("DATOS_INVALIDOS", "itemCodigo: el código de un plato del catálogo");
++    return k;
++  };
++
++  /** El servicio de pedidos dice si un cliente pagó un plato. */
++  function definirFuenteConsumo(fn) {
++    if (typeof fn !== "function") throw new Error("definirFuenteConsumo: se requiere una función");
++    fuenteConsumo = fn;
++  }
++
++  const propia = (r) => ({
++    id: String(r._id ?? r.id),
++    itemCodigo: r.itemCodigo,
++    estrellas: r.estrellas,
++    texto: r.texto ?? null,
++    oculta: r.oculta === true,
++    ts: r.createdAt ?? null,
++    editadaTs: r.updatedAt ?? null,
++  });
++
++  /** Nombres públicos de los clientes de un grupo de reseñas, en un solo viaje. */
++  async function autoresDe(empresaId, lista) {
++    const ids = [...new Set(lista.map((r) => String(r.clienteId)))];
++    if (!ids.length) return new Map();
++    const fichas = await conEmpresa(empresaId, async () => await Cliente.find({ _id: { $in: ids } }).select("nombre").lean());
++    return new Map(fichas.map((c) => [String(c._id), nombrePublico(c.nombre)]));
++  }
++
++  // ---------- operaciones del cliente ----------
++
++  /**
++   * Crea o cambia la reseña del cliente sobre un plato. Exige que lo haya pagado. Si el personal la ocultó, sigue oculta.
++   * Devuelve la reseña propia (con `oculta`).
++   */
++  async function guardarMia({ empresaId, clienteId, itemCodigo, ...datos }) {
++    idValido(clienteId, "clienteId");
++    const clave = codigoValido(itemCodigo);
++    const r = validarResena(datos);
++    if (!fuenteConsumo) throw new ErrorResena("ESTADO_INVALIDO", "las reseñas no están disponibles en este momento");
++    const item = await conEmpresa(empresaId, async () => await Item.findOne({ codigoClave: clave, activo: true }).lean());
++    if (!item) throw new ErrorResena("NO_ENCONTRADO", "plato no encontrado");
++    const pago = await fuenteConsumo({ empresaId, clienteId: String(clienteId), itemCodigo: item.codigo });
++    if (pago !== true) throw new ErrorResena("NO_PERMITIDO", "solo puedes opinar de un plato que ya pediste y pagaste");
++
++    const actualizar = async () =>
++      await conEmpresa(empresaId, async () => await Resena.updateOne({ itemClave: clave, clienteId }, { $set: r }));
++    if ((await actualizar()).matchedCount === 0) {
++      try {
++        await conEmpresa(empresaId, async () => await Resena.create({ ...r, itemClave: clave, itemCodigo: item.codigo, clienteId }));
++      } catch (e) {
++        if (e?.code !== 11000) throw e;
++        await actualizar(); // dos envíos a la vez: gana el último
++      }
++    }
++    const guardada = await conEmpresa(empresaId, async () => await Resena.findOne({ itemClave: clave, clienteId }).lean());
++    return propia(guardada);
++  }
++
++  /** El cliente borra su reseña. */
++  async function borrarMia({ empresaId, clienteId, itemCodigo }) {
++    idValido(clienteId, "clienteId");
++    const clave = codigoValido(itemCodigo);
++    const r = await conEmpresa(empresaId, async () => await Resena.deleteOne({ itemClave: clave, clienteId }));
++    if (!r?.deletedCount) throw new ErrorResena("NO_ENCONTRADO", "no tienes una reseña de este plato");
++    return { ok: true };
++  }
++
++  /** Un cliente reporta la reseña de otro. Repetirlo no suma. Una oculta ya no se ve, así que no se puede reportar. */
++  async function reportar({ empresaId, clienteId, resenaId }) {
++    idValido(clienteId, "clienteId");
++    idValido(resenaId, "resenaId");
++    const r = await conEmpresa(empresaId, async () => await Resena.findOne({ _id: resenaId, oculta: false }).lean());
++    if (!r) throw new ErrorResena("NO_ENCONTRADO", "reseña no encontrada");
++    if (String(r.clienteId) === String(clienteId)) throw new ErrorResena("ESTADO_INVALIDO", "no puedes reportar tu propia reseña");
++    if ((r.reportadoPor ?? []).length < MAX_REPORTES_GUARDADOS)
++      await conEmpresa(
++        empresaId,
++        async () =>
++          await Resena.updateOne(
++            { _id: resenaId, reportadoPor: { $ne: clienteId } },
++            { $addToSet: { reportadoPor: clienteId }, $inc: { reportes: 1 } },
++          ),
++      );
++    return { reportada: true };
++  }
++
++  // ---------- lectura pública ----------
++
++  /**
++   * Lo que la carta muestra de un plato: total, promedio, las reseñas visibles (las más recientes primero) y, si llega
++   * `clienteId`, la reseña propia (también si está oculta). Sin datos del cliente salvo el nombre público.
++   */
++  async function deItem({ empresaId, itemCodigo, clienteId = null, limite = 20, saltar = 0 }) {
++    const clave = codigoValido(itemCodigo);
++    const lim = Number.isInteger(limite) && limite >= 1 ? Math.min(limite, 50) : 20;
++    const sal = Number.isInteger(saltar) && saltar >= 0 ? saltar : 0;
++    const [resumen, lista, mia] = await conEmpresa(empresaId, async () =>
++      Promise.all([
++        Resena.aggregate([
++          { $match: { itemClave: clave, oculta: false } },
++          { $group: { _id: null, total: { $sum: 1 }, suma: { $sum: "$estrellas" } } },
++        ]),
++        Resena.find({ itemClave: clave, oculta: false }).sort({ createdAt: -1, _id: -1 }).skip(sal).limit(lim).lean(),
++        clienteId && ID.test(String(clienteId)) ? Resena.findOne({ itemClave: clave, clienteId }).lean() : null,
++      ]),
++    );
++    const autores = await autoresDe(empresaId, lista);
++    const total = resumen[0]?.total ?? 0;
++    return {
++      total,
++      promedio: promedioDe(resumen[0]?.suma ?? 0, total),
++      resenas: lista.map((r) => ({
++        id: String(r._id),
++        autor: autores.get(String(r.clienteId)) ?? "Anónimo",
++        estrellas: r.estrellas,
++        texto: r.texto ?? null,
++        ts: r.createdAt ?? null,
++        mia: clienteId ? String(r.clienteId) === String(clienteId) : false,
++      })),
++      mia: mia ? propia(mia) : null,
++    };
++  }
++
++  // ---------- moderación (personal) ----------
++
++  const fila = (r, autores, nombres) => ({
++    id: String(r._id),
++    itemCodigo: r.itemCodigo,
++    itemNombre: nombres.get(String(r.itemClave)) ?? r.itemCodigo,
++    autor: autores.get(String(r.clienteId)) ?? "Anónimo",
++    estrellas: r.estrellas,
++    texto: r.texto ?? null,
++    oculta: r.oculta === true,
++    reportes: r.reportes ?? 0,
++    ts: r.createdAt ?? null,
++    ocultaTs: r.ocultaTs ?? null,
++  });
++
++  /** Reseñas de la empresa para moderar. `filtro`: todas (por defecto), reportadas (con reportes) u ocultas. Reportadas primero. */
++  async function listar({ empresaId, actor, filtro = "todas", limite = 100, saltar = 0 }) {
++    exigirVer(actor);
++    if (!FILTROS.includes(filtro)) throw new ErrorResena("DATOS_INVALIDOS", `filtro: ${FILTROS.join(", ")}`);
++    const lim = Number.isInteger(limite) && limite >= 1 ? Math.min(limite, 200) : 100;
++    const sal = Number.isInteger(saltar) && saltar >= 0 ? saltar : 0;
++    const donde = filtro === "reportadas" ? { reportes: { $gt: 0 } } : filtro === "ocultas" ? { oculta: true } : {};
++    const lista = await conEmpresa(
++      empresaId,
++      async () => await Resena.find(donde).sort({ reportes: -1, createdAt: -1, _id: -1 }).skip(sal).limit(lim).lean(),
++    );
++    const claves = [...new Set(lista.map((r) => r.itemClave))];
++    const [autores, items] = await Promise.all([
++      autoresDe(empresaId, lista),
++      claves.length
++        ? conEmpresa(empresaId, async () => await Item.find({ codigoClave: { $in: claves } }).select("codigoClave nombre").lean())
++        : [],
++    ]);
++    const nombres = new Map(items.map((i) => [String(i.codigoClave), i.nombre]));
++    return lista.map((r) => fila(r, autores, nombres));
++  }
++
++  /** Oculta (`oculta: true`) o vuelve a mostrar una reseña. Al mostrarla se limpian sus reportes. */
++  async function moderar({ empresaId, actor, resenaId, oculta }) {
++    exigir(actor, "resena:gestionar");
++    idValido(resenaId, "resenaId");
++    if (typeof oculta !== "boolean") throw new ErrorResena("DATOS_INVALIDOS", "oculta: debe ser verdadero o falso");
++    const r = await conEmpresa(empresaId, async () => await Resena.findOne({ _id: resenaId }).lean());
++    if (!r) throw new ErrorResena("NO_ENCONTRADO", "reseña no encontrada");
++    if ((r.oculta === true) !== oculta) {
++      const cambio = oculta
++        ? { oculta: true, ocultaPor: actor.usuarioId ?? null, ocultaTs: new Date() }
++        : { oculta: false, ocultaPor: null, ocultaTs: null, reportadoPor: [], reportes: 0 };
++      await conEmpresa(empresaId, async () => await Resena.updateOne({ _id: resenaId }, { $set: cambio }));
++    }
++    const [fresca] = await conEmpresa(empresaId, async () => [await Resena.findOne({ _id: resenaId }).lean()]);
++    const [autores, items] = await Promise.all([
++      autoresDe(empresaId, [fresca]),
++      conEmpresa(empresaId, async () => await Item.find({ codigoClave: { $in: [fresca.itemClave] } }).select("codigoClave nombre").lean()),
++    ]);
++    return fila(fresca, autores, new Map(items.map((i) => [String(i.codigoClave), i.nombre])));
++  }
++
++  // ---------- manejadores HTTP del personal ----------
++  const responder = (res, e, next) => {
++    if (e instanceof ErrorResena || e instanceof ErrorAuth) return res.status(e.status).json({ error: e.message, codigo: e.codigo });
++    return next(e);
++  };
++  const envolver = (escribe, fn) => async (req, res, next) => {
++    try {
++      if (escribe) auth.exigirCsrf(req);
++      await fn(req, res);
++    } catch (e) {
++      responder(res, e, next);
++    }
++  };
++  const base = (req) => ({
++    empresaId: req.auth.empresaId,
++    actor: { usuarioId: req.auth.usuarioId, permisos: req.rol?.permisos ?? [] },
++  });
++  const entero = (v) => (v === undefined ? undefined : /^\d+$/.test(String(v)) ? Number(v) : NaN);
++
++  const manejadores = {
++    /** GET /resenas?filtro=&limite=&saltar= → { resenas } (resena:leer) */
++    listar: envolver(false, async (req, res) => {
++      const q = req.query ?? {};
++      const opc = {};
++      if (q.filtro !== undefined) opc.filtro = String(q.filtro);
++      if (q.limite !== undefined) opc.limite = entero(q.limite);
++      if (q.saltar !== undefined) opc.saltar = entero(q.saltar);
++      res.status(200).json({ resenas: await listar({ ...base(req), ...opc }) });
++    }),
++    /** PUT /resenas/:resenaId/visibilidad { oculta } (resena:gestionar) */
++    moderar: envolver(true, async (req, res) =>
++      res.status(200).json(await moderar({ ...base(req), resenaId: req.params?.resenaId, oculta: req.body?.oculta })),
++    ),
++  };
++
++  return { definirFuenteConsumo, guardarMia, borrarMia, reportar, deItem, listar, moderar, manejadores };
++}
+diff --git a/src/resenas/modelo.js b/src/resenas/modelo.js
+new file mode 100644
+index 0000000..6b23868
+--- /dev/null
++++ b/src/resenas/modelo.js
+@@ -0,0 +1,25 @@
++import mongoose from "mongoose";
++import { tenancyPlugin } from "../tenancy.js";
++
++// Reseñas de platos (5.62): estrellas y texto de un cliente con cuenta sobre un plato del catálogo que ya pagó.
++// Una por cliente y plato (editable). Nunca se borran por moderación: se ocultan. El autor no se guarda: se calcula
++// al leer desde la ficha del cliente (así el nombre editado o una anonimización se reflejan solos).
++export const resenaSchema = new mongoose.Schema(
++  {
++    itemClave: { type: String, required: true }, // código del plato en minúsculas
++    itemCodigo: { type: String, required: true }, // el código tal como está en el catálogo
++    clienteId: { type: mongoose.Schema.Types.ObjectId, required: true },
++    estrellas: { type: Number, required: true, min: 1, max: 5 },
++    texto: { type: String, default: null },
++    oculta: { type: Boolean, default: false },
++    ocultaPor: { type: mongoose.Schema.Types.ObjectId, default: null },
++    ocultaTs: { type: Date, default: null },
++    reportadoPor: { type: [mongoose.Schema.Types.ObjectId], default: [] }, // clientes que la reportaron (sin repetir)
++    reportes: { type: Number, default: 0 },
++  },
++  { timestamps: true, minimize: false },
++);
++resenaSchema.plugin(tenancyPlugin);
++resenaSchema.index({ empresaId: 1, itemClave: 1, clienteId: 1 }, { unique: true });
++resenaSchema.index({ empresaId: 1, itemClave: 1, oculta: 1, createdAt: -1 });
++resenaSchema.index({ empresaId: 1, reportes: -1, createdAt: -1 });
+diff --git a/src/resenas/rutas.js b/src/resenas/rutas.js
+new file mode 100644
+index 0000000..1ca6af9
+--- /dev/null
++++ b/src/resenas/rutas.js
+@@ -0,0 +1,18 @@
++/**
++ * Rutas de moderación de las reseñas (arquitectura 5.62). Cada una sale con sus middlewares en orden
++ * (autenticar → requierePermiso → handler). El gateway pone `express.json()` antes:
++ *
++ *   const resenas = express.Router();
++ *   resenas.use(express.json());
++ *   core.resenas.montarRutas(resenas);
++ *   gateway.use("/resenas", resenas);
++ *
++ *   GET  /                          resena:leer       ?filtro=todas|reportadas|ocultas&q=&limite=&saltar=  { resenas }
++ *   PUT  /:resenaId/visibilidad     resena:gestionar  { oculta: boolean }
++ */
++export function montarRutasResenas(router, { resenas, autenticar, requierePermiso }) {
++  const m = resenas.manejadores;
++  router.get("/", autenticar(), requierePermiso("resena:leer"), m.listar);
++  router.put("/:resenaId/visibilidad", autenticar(), requierePermiso("resena:gestionar"), m.moderar);
++  return router;
++}
+diff --git a/src/resenas/validacion.js b/src/resenas/validacion.js
+new file mode 100644
+index 0000000..0f172ed
+--- /dev/null
++++ b/src/resenas/validacion.js
+@@ -0,0 +1,41 @@
++import { ErrorResena } from "./errores.js";
++
++// Lógica pura de las reseñas (5.62): solo estrellas y texto (sin imágenes ni video, decisión de producto desde 5.25).
++export const MAX_TEXTO = 500;
++const malo = (m) => new ErrorResena("DATOS_INVALIDOS", m);
++
++/** Mismo criterio del catálogo: los códigos no distinguen mayúsculas. */
++export const claveDe = (codigo) => String(codigo ?? "").trim().toLowerCase();
++
++/** `{ estrellas, texto? }` → `{ estrellas, texto|null }`. Estrellas: entero de 1 a 5. El texto es opcional (hasta 500). */
++export function validarResena(datos) {
++  if (!datos || typeof datos !== "object" || Array.isArray(datos)) throw malo("la reseña debe ser un objeto");
++  const extra = Object.keys(datos).filter((k) => !["estrellas", "texto"].includes(k));
++  if (extra.length) throw malo(`campos no admitidos (${extra.join(", ")})`);
++  if (!Number.isInteger(datos.estrellas) || datos.estrellas < 1 || datos.estrellas > 5)
++    throw malo("estrellas: un número entero de 1 a 5");
++  let texto = null;
++  if (datos.texto !== undefined && datos.texto !== null) {
++    if (typeof datos.texto !== "string") throw malo("texto: debe ser texto");
++    // eslint-disable-next-line no-control-regex
++    const limpio = datos.texto.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "").trim();
++    if (limpio.length > MAX_TEXTO) throw malo(`texto: hasta ${MAX_TEXTO} caracteres`);
++    texto = limpio || null;
++  }
++  return { estrellas: datos.estrellas, texto };
++}
++
++/**
++ * Cómo se muestra el autor: primer nombre + inicial del último apellido («María del Carmen Pérez» → «María P.»).
++ * Una ficha anonimizada o sin nombre sale como «Anónimo».
++ */
++export function nombrePublico(nombre) {
++  const partes = String(nombre ?? "").trim().split(/\s+/).filter(Boolean);
++  if (!partes.length || /^cliente anonimizado$/i.test(partes.join(" "))) return "Anónimo";
++  if (partes.length === 1) return partes[0];
++  const inicial = [...partes.at(-1)][0].toLocaleUpperCase("es");
++  return `${partes[0]} ${inicial}.`;
++}
++
++/** Promedio con un decimal, o null si no hay reseñas. */
++export const promedioDe = (suma, total) => (total > 0 ? Math.round((suma / total) * 10) / 10 : null);
+diff --git a/test/resenas-servicio.test.js b/test/resenas-servicio.test.js
+new file mode 100644
+index 0000000..d2f819a
+--- /dev/null
++++ b/test/resenas-servicio.test.js
+@@ -0,0 +1,395 @@
++// Reseñas de platos (5.62). Sin base de datos: el servicio corre contra almacenes falsos en memoria.
++import { describe, it, beforeEach } from "node:test";
++import assert from "node:assert/strict";
++import { crearServicioResenas } from "../src/resenas/index.js";
++import { montarRutasResenas } from "../src/resenas/rutas.js";
++import { ErrorResena } from "../src/resenas/errores.js";
++import { validarResena, nombrePublico, promedioDe, MAX_TEXTO } from "../src/resenas/validacion.js";
++import { ErrorAuth } from "../src/auth/errores.js";
++import { conEmpresa, empresaActual } from "../src/tenancy.js";
++
++const E1 = "aaaaaaaaaaaaaaaaaaaaaaa1";
++const E2 = "aaaaaaaaaaaaaaaaaaaaaaa2";
++const C1 = "bbbbbbbbbbbbbbbbbbbbbbb1";
++const C2 = "bbbbbbbbbbbbbbbbbbbbbbb2";
++const C3 = "bbbbbbbbbbbbbbbbbbbbbbb3";
++const ADM = { usuarioId: "0123456789abcdef01234567", permisos: ["*"] };
++const LECTOR = { usuarioId: "0123456789abcdef01234568", permisos: ["resena:leer"] };
++const MESERO = { usuarioId: "0123456789abcdef01234569", permisos: ["catalogo:leer"] };
++
++const rechaza = (p, codigo, status) =>
++  assert.rejects(p, (e) => e instanceof ErrorResena && e.codigo === codigo && (status === undefined || e.status === status));
++
++// ---------- almacén falso ----------
++function almacen(unico = null) {
++  const filas = [];
++  let n = 0;
++  const propias = () => filas.filter((p) => p.empresaId === empresaActual());
++  const valor = (d, k) => d[k];
++  const coincide = (d, f) =>
++    Object.entries(f).every(([k, v]) => {
++      const x = valor(d, k);
++      if (v && typeof v === "object" && !Array.isArray(v)) {
++        if ("$in" in v) return v.$in.map(String).includes(String(x));
++        if ("$gt" in v) return x > v.$gt;
++        if ("$ne" in v) return Array.isArray(x) ? !x.map(String).includes(String(v.$ne)) : String(x) !== String(v.$ne);
++      }
++      return String(x) === String(v);
++    });
++  const consulta = (fn) => {
++    const q = { _o: null, _s: 0, _l: Infinity };
++    q.lean = () => q;
++    q.select = () => q;
++    q.sort = (o) => ((q._o = o), q);
++    q.skip = (s) => ((q._s = s), q);
++    q.limit = (l) => ((q._l = l), q);
++    q.then = (ok, ko) =>
++      Promise.resolve()
++        .then(() => {
++          let r = fn();
++          if (Array.isArray(r)) {
++            if (q._o) {
++              const claves = Object.entries(q._o);
++              r = [...r].sort((a, b) => {
++                for (const [k, dir] of claves) {
++                  const x = k === "createdAt" ? a.createdAt.getTime() : a[k];
++                  const y = k === "createdAt" ? b.createdAt.getTime() : b[k];
++                  if (x === y) continue;
++                  return (x < y ? -1 : 1) * dir;
++                }
++                return 0;
++              });
++            }
++            r = r.slice(q._s, q._s + q._l);
++          }
++          return structuredClone(r);
++        })
++        .then(ok, ko);
++    return q;
++  };
++  return {
++    filas,
++    find: (f = {}) => consulta(() => propias().filter((p) => coincide(p, f))),
++    findOne: (f) => consulta(() => propias().find((p) => coincide(p, f)) ?? null),
++    async create(doc) {
++      if (unico && propias().some((p) => unico.every((k) => String(p[k]) === String(doc[k])))) throw Object.assign(new Error("dup"), { code: 11000 });
++      n += 1;
++      const p = {
++        _id: String(n).padStart(24, "0"), empresaId: empresaActual(), createdAt: new Date(Date.UTC(2026, 9, 20, 12, 0, n)), updatedAt: new Date(),
++        oculta: false, reportadoPor: [], reportes: 0, ocultaPor: null, ocultaTs: null, ...structuredClone(doc),
++      };
++      filas.push(p);
++      return { toObject: () => structuredClone(p) };
++    },
++    async updateOne(f, cambio) {
++      const p = propias().find((x) => coincide(x, f));
++      if (!p) return { matchedCount: 0 };
++      if (cambio.$set) Object.assign(p, structuredClone(cambio.$set));
++      for (const [k, v] of Object.entries(cambio.$addToSet ?? {})) if (!p[k].map(String).includes(String(v))) p[k].push(v);
++      for (const [k, v] of Object.entries(cambio.$inc ?? {})) p[k] = (p[k] ?? 0) + v;
++      p.updatedAt = new Date(p.updatedAt.getTime() + 1000);
++      return { matchedCount: 1 };
++    },
++    async deleteOne(f) {
++      const i = filas.findIndex((x) => x.empresaId === empresaActual() && coincide(x, f));
++      if (i < 0) return { deletedCount: 0 };
++      filas.splice(i, 1);
++      return { deletedCount: 1 };
++    },
++    // Solo la forma que usa deItem: $match + $group de total y suma de estrellas
++    aggregate(pipeline) {
++      return consulta(() => {
++        const sel = propias().filter((p) => coincide(p, pipeline[0].$match));
++        return sel.length ? [{ _id: null, total: sel.length, suma: sel.reduce((s, p) => s + p.estrellas, 0) }] : [];
++      });
++    },
++  };
++}
++
++function crearMundo() {
++  const Resena = almacen(["itemClave", "clienteId"]);
++  const Cliente = almacen();
++  const Item = almacen();
++  const auth = {
++    exigirCsrf(req) {
++      if (req.method !== "GET" && !req.headers?.["x-requested-with"]) throw new ErrorAuth("CSRF", "falta la cabecera x-requested-with");
++    },
++  };
++  const servicio = crearServicioResenas({ Resena, Cliente, Item }, auth);
++  const pagados = new Set(); // "empresa|cliente|codigo"
++  servicio.definirFuenteConsumo(async ({ empresaId, clienteId, itemCodigo }) => pagados.has(`${empresaId}|${clienteId}|${itemCodigo}`));
++  const en = (e, fn) => conEmpresa(e, fn);
++  const sembrar = async () => {
++    for (const e of [E1, E2]) {
++      await en(e, () => Item.create({ codigo: "Moka", codigoClave: "moka", nombre: "Moka", activo: true }));
++      await en(e, () => Item.create({ codigo: "Latte", codigoClave: "latte", nombre: "Latte", activo: true }));
++    }
++    for (const [id, nombre] of [[C1, "María del Carmen Pérez"], [C2, "Diego"], [C3, "Cliente anonimizado"]]) {
++      await en(E1, async () => {
++        const c = await Cliente.create({ nombre });
++        c.toObject; // eslint-disable-line no-unused-expressions
++      });
++      // los ids de cliente de la prueba son fijos: se reasignan
++      const f = Cliente.filas.filter((x) => x.empresaId === E1 && x.nombre === nombre);
++      f[0]._id = id;
++    }
++  };
++  const guardar = (c, datos, e = E1, codigo = "Moka") => en(e, () => servicio.guardarMia({ empresaId: e, clienteId: c, itemCodigo: codigo, ...datos }));
++  return { servicio, Resena, Cliente, Item, pagados, en, sembrar, guardar };
++}
++
++describe("validación y nombre público", () => {
++  it("estrellas enteras de 1 a 5 y texto opcional con tope", () => {
++    assert.deepEqual(validarResena({ estrellas: 5 }), { estrellas: 5, texto: null });
++    assert.deepEqual(validarResena({ estrellas: 3, texto: "  rico \n" }), { estrellas: 3, texto: "rico" });
++    assert.equal(validarResena({ estrellas: 4, texto: "   " }).texto, null);
++    for (const e of [0, 6, 3.5, "5", null, undefined]) assert.throws(() => validarResena({ estrellas: e }), ErrorResena);
++    assert.throws(() => validarResena({ estrellas: 5, texto: "x".repeat(MAX_TEXTO + 1) }), ErrorResena);
++    assert.doesNotThrow(() => validarResena({ estrellas: 5, texto: "x".repeat(MAX_TEXTO) }));
++    assert.throws(() => validarResena({ estrellas: 5, texto: 7 }), ErrorResena);
++    assert.throws(() => validarResena({ estrellas: 5, clienteId: "x" }), /no admitidos/);
++    assert.throws(() => validarResena(null), ErrorResena);
++  });
++  it("quita caracteres de control pero conserva saltos de línea", () => {
++    assert.equal(validarResena({ estrellas: 5, texto: "a\u0000b\nc\u0007" }).texto, "ab\nc");
++  });
++  it("autor: primer nombre + inicial; anonimizado o vacío = Anónimo", () => {
++    assert.equal(nombrePublico("María del Carmen Pérez"), "María P.");
++    assert.equal(nombrePublico("  diego   ñandú "), "diego Ñ.");
++    assert.equal(nombrePublico("Diego"), "Diego");
++    assert.equal(nombrePublico("Cliente anonimizado"), "Anónimo");
++    assert.equal(nombrePublico(""), "Anónimo");
++    assert.equal(nombrePublico(null), "Anónimo");
++  });
++  it("promedio con un decimal", () => {
++    assert.equal(promedioDe(14, 3), 4.7);
++    assert.equal(promedioDe(0, 0), null);
++  });
++});
++
++describe("reseñas: cliente", () => {
++  let m;
++  beforeEach(async () => {
++    m = crearMundo();
++    await m.sembrar();
++    m.pagados.add(`${E1}|${C1}|Moka`);
++    m.pagados.add(`${E1}|${C2}|Moka`);
++  });
++
++  it("solo opina quien pagó el plato", async () => {
++    await rechaza(m.guardar(C3, { estrellas: 5 }), "NO_PERMITIDO", 403);
++    await rechaza(m.guardar(C1, { estrellas: 5 }, E1, "Latte"), "NO_PERMITIDO", 403); // pagó Moka, no Latte
++    const r = await m.guardar(C1, { estrellas: 5, texto: "Muy rico" });
++    assert.equal(r.estrellas, 5);
++    assert.equal(r.oculta, false);
++    assert.equal(m.Resena.filas.length, 1);
++  });
++  it("el código no distingue mayúsculas y se guarda el del catálogo", async () => {
++    const r = await m.guardar(C1, { estrellas: 4 }, E1, "  MOKA ");
++    assert.equal(r.itemCodigo, "Moka");
++    assert.equal(m.Resena.filas[0].itemClave, "moka");
++  });
++  it("lo pagado en otra empresa no vale", async () => {
++    m.pagados.add(`${E2}|${C3}|Moka`);
++    await rechaza(m.guardar(C3, { estrellas: 5 }, E1), "NO_PERMITIDO");
++  });
++  it("una por cliente y plato: volver a enviar la edita", async () => {
++    await m.guardar(C1, { estrellas: 5, texto: "a" });
++    const r = await m.guardar(C1, { estrellas: 2, texto: "b" });
++    assert.equal(m.Resena.filas.length, 1);
++    assert.equal(r.estrellas, 2);
++    assert.equal(r.texto, "b");
++  });
++  it("datos inválidos, plato inexistente, id inválido y sin fuente de consumo", async () => {
++    await rechaza(m.guardar(C1, { estrellas: 9 }), "DATOS_INVALIDOS", 400);
++    await rechaza(m.guardar(C1, { estrellas: 5 }, E1, "nope"), "NO_ENCONTRADO", 404);
++    await rechaza(m.guardar("x", { estrellas: 5 }), "DATOS_INVALIDOS");
++    await rechaza(m.guardar(C1, { estrellas: 5 }, E1, ""), "DATOS_INVALIDOS");
++    const sin = crearServicioResenas({ Resena: m.Resena, Cliente: m.Cliente, Item: m.Item }, {});
++    await rechaza(m.en(E1, () => sin.guardarMia({ empresaId: E1, clienteId: C1, itemCodigo: "Moka", estrellas: 5 })), "ESTADO_INVALIDO", 409);
++  });
++  it("un plato dado de baja ya no se reseña", async () => {
++    m.Item.filas.find((i) => i.codigoClave === "moka" && i.empresaId === E1).activo = false;
++    await rechaza(m.guardar(C1, { estrellas: 5 }), "NO_ENCONTRADO");
++  });
++  it("borrar la propia; sin reseña da NO_ENCONTRADO", async () => {
++    await m.guardar(C1, { estrellas: 5 });
++    await m.en(E1, () => m.servicio.borrarMia({ empresaId: E1, clienteId: C1, itemCodigo: "moka" }));
++    assert.equal(m.Resena.filas.length, 0);
++    await rechaza(m.en(E1, () => m.servicio.borrarMia({ empresaId: E1, clienteId: C1, itemCodigo: "moka" })), "NO_ENCONTRADO");
++  });
++  it("una reseña oculta por el personal sigue oculta si el cliente la edita", async () => {
++    const r = await m.guardar(C1, { estrellas: 1, texto: "ofensivo" });
++    await m.en(E1, () => m.servicio.moderar({ empresaId: E1, actor: ADM, resenaId: r.id, oculta: true }));
++    const otra = await m.guardar(C1, { estrellas: 1, texto: "ofensivo otra vez" });
++    assert.equal(otra.oculta, true);
++  });
++});
++
++describe("reseñas: lectura pública", () => {
++  let m;
++  const ver = (o = {}, e = E1) => m.en(e, () => m.servicio.deItem({ empresaId: e, itemCodigo: "moka", ...o }));
++  beforeEach(async () => {
++    m = crearMundo();
++    await m.sembrar();
++    m.pagados.add(`${E1}|${C1}|Moka`);
++    m.pagados.add(`${E1}|${C2}|Moka`);
++  });
++
++  it("sin reseñas: total 0 y promedio null", async () => {
++    const r = await ver();
++    assert.deepEqual([r.total, r.promedio, r.resenas.length, r.mia], [0, null, 0, null]);
++  });
++  it("total, promedio, autor público y la más reciente primero; sin ids de cliente", async () => {
++    await m.guardar(C1, { estrellas: 5, texto: "primera" });
++    await m.guardar(C2, { estrellas: 4 });
++    const r = await ver();
++    assert.equal(r.total, 2);
++    assert.equal(r.promedio, 4.5);
++    assert.deepEqual(r.resenas.map((x) => x.autor), ["Diego", "María P."]);
++    assert.equal(r.resenas[1].texto, "primera");
++    assert.ok(!JSON.stringify(r).includes(C1));
++    assert.equal(r.mia, null);
++  });
++  it("`mia` y la marca mia solo salen para el cliente que mira", async () => {
++    await m.guardar(C1, { estrellas: 5 });
++    await m.guardar(C2, { estrellas: 3 });
++    const r = await ver({ clienteId: C1 });
++    assert.equal(r.mia.estrellas, 5);
++    assert.deepEqual(r.resenas.map((x) => x.mia), [false, true]);
++    const anonimo = await ver();
++    assert.deepEqual(anonimo.resenas.map((x) => x.mia), [false, false]);
++  });
++  it("las ocultas no cuentan ni se ven, pero su autor aún ve la suya marcada", async () => {
++    const a = await m.guardar(C1, { estrellas: 1 });
++    await m.guardar(C2, { estrellas: 5 });
++    await m.en(E1, () => m.servicio.moderar({ empresaId: E1, actor: ADM, resenaId: a.id, oculta: true }));
++    const r = await ver({ clienteId: C1 });
++    assert.equal(r.total, 1);
++    assert.equal(r.promedio, 5);
++    assert.equal(r.resenas.length, 1);
++    assert.equal(r.mia.oculta, true);
++  });
++  it("una ficha anonimizada sale como Anónimo", async () => {
++    m.pagados.add(`${E1}|${C3}|Moka`);
++    await m.guardar(C3, { estrellas: 4 });
++    assert.equal((await ver()).resenas[0].autor, "Anónimo");
++  });
++  it("aislada por empresa y paginada", async () => {
++    await m.guardar(C1, { estrellas: 5 });
++    await m.guardar(C2, { estrellas: 4 });
++    assert.equal((await ver({}, E2)).total, 0);
++    const p = await ver({ limite: 1 });
++    assert.equal(p.resenas.length, 1);
++    assert.equal(p.total, 2);
++    const q = await ver({ limite: 1, saltar: 1 });
++    assert.equal(q.resenas[0].autor, "María P.");
++  });
++});
++
++describe("reseñas: reportar y moderar", () => {
++  let m;
++  let r1;
++  const rep = (c, id) => m.en(E1, () => m.servicio.reportar({ empresaId: E1, clienteId: c, resenaId: id }));
++  const mod = (actor, id, oculta) => m.en(E1, () => m.servicio.moderar({ empresaId: E1, actor, resenaId: id, oculta }));
++  const lista = (actor, o = {}) => m.en(E1, () => m.servicio.listar({ empresaId: E1, actor, ...o }));
++  beforeEach(async () => {
++    m = crearMundo();
++    await m.sembrar();
++    for (const c of [C1, C2, C3]) m.pagados.add(`${E1}|${c}|Moka`);
++    r1 = await m.guardar(C1, { estrellas: 1, texto: "mala" });
++    await m.guardar(C2, { estrellas: 5 });
++  });
++
++  it("reportar suma una vez por cliente; no la propia; no una oculta o inexistente", async () => {
++    await rep(C2, r1.id);
++    await rep(C2, r1.id);
++    assert.equal(m.Resena.filas[0].reportes, 1);
++    await rep(C3, r1.id);
++    assert.equal(m.Resena.filas[0].reportes, 2);
++    await rechaza(rep(C1, r1.id), "ESTADO_INVALIDO", 409);
++    await rechaza(rep(C2, "0".repeat(24).replace(/0$/, "9")), "NO_ENCONTRADO", 404);
++    await rechaza(rep(C2, "zz"), "DATOS_INVALIDOS");
++    await mod(ADM, r1.id, true);
++    await rechaza(rep(C3, r1.id), "NO_ENCONTRADO");
++  });
++  it("listar exige resena:leer (o gestionar); la reportada va primero y trae el nombre del plato", async () => {
++    await rep(C2, r1.id);
++    await rechaza(lista(MESERO), "PERMISO_INSUFICIENTE", 403);
++    await rechaza(lista(null), "PERMISO_INSUFICIENTE");
++    const todas = await lista(LECTOR);
++    assert.equal(todas.length, 2);
++    assert.equal(todas[0].id, r1.id);
++    assert.equal(todas[0].reportes, 1);
++    assert.equal(todas[0].itemNombre, "Moka");
++    assert.equal(todas[0].autor, "María P.");
++    assert.deepEqual((await lista(LECTOR, { filtro: "reportadas" })).map((x) => x.id), [r1.id]);
++    await rechaza(lista(LECTOR, { filtro: "otra" }), "DATOS_INVALIDOS");
++  });
++  it("ocultar exige resena:gestionar; el lector no puede", async () => {
++    await rechaza(mod(LECTOR, r1.id, true), "PERMISO_INSUFICIENTE", 403);
++    const r = await mod(ADM, r1.id, true);
++    assert.equal(r.oculta, true);
++    assert.equal(m.Resena.filas[0].ocultaPor, ADM.usuarioId);
++    assert.deepEqual((await lista(LECTOR, { filtro: "ocultas" })).map((x) => x.id), [r1.id]);
++  });
++  it("mostrarla de nuevo limpia los reportes; repetir una acción no cambia nada; valida entradas", async () => {
++    await rep(C2, r1.id);
++    await mod(ADM, r1.id, true);
++    const r = await mod(ADM, r1.id, false);
++    assert.equal(r.oculta, false);
++    assert.equal(r.reportes, 0);
++    assert.equal(m.Resena.filas[0].ocultaTs, null);
++    await mod(ADM, r1.id, false);
++    await rechaza(mod(ADM, r1.id, "si"), "DATOS_INVALIDOS");
++    await rechaza(mod(ADM, "nope", true), "DATOS_INVALIDOS");
++    await rechaza(mod(ADM, "f".repeat(24), true), "NO_ENCONTRADO");
++  });
++});
++
++describe("rutas y manejadores", () => {
++  it("rutas del personal en orden y con su permiso", () => {
++    const rutas = [];
++    const router = { get: (...a) => rutas.push(["GET", ...a]), put: (...a) => rutas.push(["PUT", ...a]) };
++    const pedidos = [];
++    montarRutasResenas(router, {
++      resenas: { manejadores: { listar: "L", moderar: "M" } },
++      autenticar: () => "auth",
++      requierePermiso: (p) => (pedidos.push(p), `perm:${p}`),
++    });
++    assert.deepEqual(pedidos, ["resena:leer", "resena:gestionar"]);
++    assert.deepEqual(rutas.map((r) => [r[0], r[1]]), [["GET", "/"], ["PUT", "/:resenaId/visibilidad"]]);
++    assert.deepEqual(rutas[0].slice(2), ["auth", "perm:resena:leer", "L"]);
++  });
++
++  it("manejadores: listar con query, moderar con CSRF y errores con su status", async () => {
++    const m = crearMundo();
++    await m.sembrar();
++    m.pagados.add(`${E1}|${C1}|Moka`);
++    const r1 = await m.guardar(C1, { estrellas: 2 });
++    const res = () => {
++      const o = { cuerpo: null };
++      o.status = (c) => ((o.codigo = c), o);
++      o.json = (b) => ((o.cuerpo = b), o);
++      return o;
++    };
++    const req = (extra = {}) => ({ method: "GET", headers: {}, auth: { empresaId: E1, usuarioId: ADM.usuarioId }, rol: { permisos: ["*"] }, ...extra });
++    const a = res();
++    await m.en(E1, () => m.servicio.manejadores.listar(req({ query: { filtro: "todas", limite: "5" } }), a, (e) => { throw e; }));
++    assert.equal(a.codigo, 200);
++    assert.equal(a.cuerpo.resenas.length, 1);
++    const b = res();
++    await m.en(E1, () => m.servicio.manejadores.moderar(req({ method: "PUT", params: { resenaId: r1.id }, body: { oculta: true } }), b, (e) => { throw e; }));
++    assert.equal(b.codigo, 403); // sin x-requested-with
++    const c = res();
++    await m.en(E1, () => m.servicio.manejadores.moderar(req({ method: "PUT", headers: { "x-requested-with": "x" }, params: { resenaId: r1.id }, body: { oculta: true } }), c, (e) => { throw e; }));
++    assert.equal(c.codigo, 200);
++    assert.equal(c.cuerpo.oculta, true);
++    const d = res();
++    await m.en(E1, () => m.servicio.manejadores.listar(req({ rol: { permisos: [] }, query: {} }), d, (e) => { throw e; }));
++    assert.equal(d.codigo, 403);
++    const e = res();
++    await m.en(E1, () => m.servicio.manejadores.listar(req({ query: { limite: "abc" } }), e, (x) => { throw x; }));
++    assert.equal(e.codigo, 200); // un límite raro vuelve al valor por defecto
++  });
++});
