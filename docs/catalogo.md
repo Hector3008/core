@@ -79,6 +79,7 @@ No tiene ruta HTTP: la usan los servicios desde el código.
 | `catalogo:crear` | Dar de alta un ítem. |
 | `catalogo:editar` | Corregir nombre, categoría, precio y atributos. |
 | `catalogo:gestionar` | Baja, reactivar e importar en bloque. |
+| `catalogo:disponibilidad` | Marcar un ítem como agotado (o disponible otra vez) y ver esa lista, sin ver precios. La plantilla de `cocina` de tobt la trae (las empresas ya creadas la reciben con `core.empleados.editarRol`). |
 
 `catalogo:*` los incluye todos. No se agregó ningún rol a las plantillas: cada empresa crea el suyo (por ejemplo «encargado de carta») con `core.empleados.crearRol`. Como en empleados y clientes, cada operación que cambia algo recibe `actor = { usuarioId, permisos }` y comprueba su permiso, así que protege aunque una ruta se monte sin `requierePermiso`.
 
@@ -92,6 +93,17 @@ No tiene ruta HTTP: la usan los servicios desde el código.
 - **Buscar** (`GET /catalogo?q=`): por el **comienzo del código** (sin distinguir mayúsculas) o por **parte del nombre**. `&categoria=` filtra por categoría exacta. Máximo 200 por llamada, ordenado por nombre.
 - **Categorías:** `categorias()` devuelve las que están en uso (solo de ítems activos) con su cantidad. Sirve para armar filtros; no hay una colección de categorías.
 - **Baja:** nunca se borra un ítem. Desactivado deja de listarse (salvo `incluirInactivos`) y de poder usarse en `instantanea`, pero sigue consultable.
+
+## Disponibilidad: platos agotados (5.60)
+
+Cocina marca lo que no hay hoy. Es un **aviso, no una baja**: el ítem sigue activo, conserva precio y datos y se puede pedir igual; `instantanea` lo copia como siempre y la copia **no** guarda si estaba agotado (es un dato del día, no del documento).
+
+- **Dato:** `agotado` (boolean), `agotadoTs` y `agotadoPor` en el ítem. El `dto` (y por lo tanto `GET /catalogo`, el buscador del mesero y la carta) trae `agotado` y `agotadoTs`.
+- **`marcarAgotado({ empresaId, actor, itemId, agotado })`:** exige `catalogo:disponibilidad` (no `catalogo:editar`: cocina no necesita poder tocar precios). `agotado` debe ser `true` o `false`. Repetir el mismo estado no cambia nada, ni quién ni cuándo lo marcó. Un ítem desactivado no se marca (`ESTADO_INVALIDO`). Volver a disponible limpia `agotadoTs` y `agotadoPor`. Editar el ítem con `actualizar` no cambia si está agotado.
+- **`disponibilidad({ empresaId, texto?, soloAgotados?, limite?, saltar? })`:** la lista de cocina: ítems activos con `{ id, codigo, nombre, categoria, agotado, agotadoTs }` (**sin precio ni atributos**), los agotados primero y luego por nombre; máximo 200 por llamada.
+- **`agotadosDe({ empresaId, codigos })`:** de una lista de códigos, los agotados y activos como `[{ codigo, nombre }]`. Es lo que un servicio consulta al armar un pedido para avisar; códigos raros o líneas libres no fallan, solo no salen.
+- **No se reinicia solo:** queda agotado hasta que cocina lo quite (decisión de Héctor, 26 de octubre de 2026).
+- **Límites:** no hay stock ni cantidades (solo agotado o no); marcar y desmarcar no se registra en `eventos` (queda quién y cuándo de la última marca); si dos personas lo marcan a la vez gana la última escritura.
 
 ## Importar en bloque
 
@@ -110,8 +122,9 @@ No tiene ruta HTTP: la usan los servicios desde el código.
 - `catalogo:crear`: `POST /`.
 - `catalogo:editar`: `PUT /:itemId`.
 - `catalogo:gestionar`: `POST /importar` (`{ filas, simular? }`), `POST /:itemId/desactivar`, `POST /:itemId/reactivar`.
+- `catalogo:disponibilidad`: `GET /disponibilidad` (`?q=`, `&agotados=1`, `&limite=`, `&saltar=`) y `PUT /:itemId/disponibilidad` (`{ agotado: true | false }`).
 
-Todas llevan `autenticar → requierePermiso → handler`; las que escriben exigen `x-requested-with`. Las rutas fijas (`/categorias`, `/codigo/:codigo`, `/importar`) se registran antes que `/:itemId`.
+Todas llevan `autenticar → requierePermiso → handler`; las que escriben exigen `x-requested-with`. Las rutas fijas (`/categorias`, `/codigo/:codigo`, `/disponibilidad`, `/importar`) se registran antes que `/:itemId`.
 
 ## Montaje en el gateway
 
@@ -126,6 +139,6 @@ Y en `db.js`, junto a los otros `listo()`: `await core.catalogo.listo();` (crea 
 
 ## Pruebas
 
-- `catalogo-validacion.test.js` (30) y `catalogo-logica.test.js` (55): sin base de datos. La segunda corre el servicio contra un almacén falso en memoria.
+- `catalogo-validacion.test.js` (30), `catalogo-logica.test.js` (55) y `catalogo-disponibilidad.test.js` (22, platos agotados): sin base de datos. La segunda corre el servicio contra un almacén falso en memoria.
 - `catalogo.test.js`: requiere MongoDB real (`MONGODB_URI`). Cubre lo que depende de MongoDB de verdad: el índice único sin distinguir mayúsculas, creaciones simultáneas del mismo código, el upsert de la importación, el `aggregate` de categorías con la empresa activa y el aislamiento entre empresas. En FerretDB no es fiable (arquitectura 5.9).
 - `humo-catalogo.mjs` (en `test/` del gateway): recorre las rutas por HTTP real contra el gateway en marcha.

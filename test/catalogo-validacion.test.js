@@ -249,9 +249,9 @@ describe("rutas del catálogo", () => {
       autenticar: () => () => {},
       requierePermiso: (p) => (pedidos.push(p), () => {}),
     });
-    assert.equal(rutas.length, 9);
+    assert.equal(rutas.length, 11); // + GET /disponibilidad y PUT /:itemId/disponibilidad (5.60)
     assert.ok(rutas.every((r) => r.n === 3));
-    assert.deepEqual([...new Set(pedidos)].sort(), ["catalogo:crear", "catalogo:editar", "catalogo:gestionar", "catalogo:leer"]);
+    assert.deepEqual([...new Set(pedidos)].sort(), ["catalogo:crear", "catalogo:disponibilidad", "catalogo:editar", "catalogo:gestionar", "catalogo:leer"]);
   });
 
   it("las rutas fijas van antes que /:itemId para que no las capture", () => {
@@ -263,6 +263,7 @@ describe("rutas del catálogo", () => {
     const idx = (s) => orden.indexOf(s);
     assert.ok(idx("get /categorias") < idx("get /:itemId"));
     assert.ok(idx("get /codigo/:codigo") < idx("get /:itemId"));
+    assert.ok(idx("get /disponibilidad") < idx("get /:itemId"));
     assert.ok(orden.includes("post /importar"));
   });
 });

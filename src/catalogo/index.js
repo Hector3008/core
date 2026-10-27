@@ -30,6 +30,7 @@ const MAX_ERRORES_IMPORTACION = 50;
  *   catalogo:crear     → dar de alta un ítem
  *   catalogo:editar    → corregir nombre, categoría, precio y atributos
  *   catalogo:gestionar → baja, reactivar e importar en bloque
+ *   catalogo:disponibilidad → marcar un ítem como agotado (o disponible otra vez) y ver esa lista; no da acceso a precios
  *
  * Un ítem nunca se borra: los documentos y eventos lo mencionan. Se desactiva, y deja de poder agregarse a
  * documentos nuevos (`instantanea`) pero sigue consultable.
@@ -74,6 +75,8 @@ export function crearServicioCatalogo({ Empresa, Item }, auth) {
       precio: i.precio ?? null,
       atributos: structuredClone(i.atributos ?? {}),
       activo: i.activo !== false,
+      agotado: i.agotado === true,
+      agotadoTs: i.agotadoTs ?? null,
       creadoTs: i.createdAt ?? null,
       actualizadoTs: i.updatedAt ?? null,
     };
@@ -224,6 +227,64 @@ export function crearServicioCatalogo({ Empresa, Item }, auth) {
       await Item.updateOne({ _id: itemId, activo: false }, { activo: true, desactivadoTs: null }),
     );
     return obtener({ empresaId, itemId });
+  }
+
+  // ---------- disponibilidad (5.60) ----------
+  /**
+   * Cocina marca un ítem como agotado (`agotado: true`) o disponible otra vez (`false`). Solo pide
+   * `catalogo:disponibilidad`: quien lo tiene no necesita poder editar el catálogo. Es un aviso, no una baja: el ítem
+   * sigue activo y se puede pedir. Repetir el mismo estado no cambia nada (ni quién ni cuándo lo marcó). Un ítem
+   * desactivado no se marca (ya no se puede pedir).
+   */
+  async function marcarAgotado({ empresaId, actor, itemId, agotado }) {
+    exigir(actor, "catalogo:disponibilidad");
+    if (typeof agotado !== "boolean") throw new ErrorCatalogo("DATOS_INVALIDOS", "agotado debe ser true o false");
+    const i = await cargar(empresaId, itemId);
+    if (i.activo === false) throw new ErrorCatalogo("ESTADO_INVALIDO", "el ítem está desactivado");
+    if ((i.agotado === true) === agotado) return dto(i);
+    const cambio = agotado
+      ? { agotado: true, agotadoTs: new Date(), agotadoPor: actor.usuarioId ?? null }
+      : { agotado: false, agotadoTs: null, agotadoPor: null };
+    await conEmpresa(empresaId, async () => await Item.updateOne({ _id: itemId, activo: true }, { $set: cambio }));
+    return obtener({ empresaId, itemId });
+  }
+
+  /**
+   * La lista de cocina: ítems activos con lo mínimo para marcarlos (sin precio), los agotados primero y luego por
+   * nombre. `texto` busca como el catálogo; `soloAgotados` deja solo los marcados. Máximo 200 por llamada.
+   */
+  async function disponibilidad({ empresaId, texto, soloAgotados = false, limite = 200, saltar = 0 }) {
+    const filtro = texto === undefined || texto === "" ? {} : filtroTexto(texto);
+    filtro.activo = true;
+    if (soloAgotados) filtro.agotado = true;
+    const lim = Math.min(Math.max(Math.trunc(Number(limite)) || 200, 1), 200);
+    const sal = Math.max(Math.trunc(Number(saltar)) || 0, 0);
+    const is = await conEmpresa(empresaId, async () =>
+      await Item.find(filtro).sort({ agotado: -1, nombre: 1, _id: 1 }).skip(sal).limit(lim).lean(),
+    );
+    return is.map((i) => ({
+      id: String(i._id),
+      codigo: i.codigo,
+      nombre: i.nombre,
+      categoria: i.categoria ?? null,
+      agotado: i.agotado === true,
+      agotadoTs: i.agotadoTs ?? null,
+    }));
+  }
+
+  /**
+   * Cuáles de estos códigos están agotados hoy: `[{ codigo, nombre }]` (los que no existen, están desactivados o
+   * disponibles no salen). Es lo que un servicio consulta al armar un pedido para avisar; nunca falla por un código
+   * raro (una línea libre no tiene código del catálogo y simplemente no aparece).
+   */
+  async function agotadosDe({ empresaId, codigos }) {
+    if (!Array.isArray(codigos)) return [];
+    const claves = [...new Set(codigos.filter((c) => typeof c === "string" && c.trim()).map((c) => claveDe(c.trim())))];
+    if (!claves.length) return [];
+    const is = await conEmpresa(empresaId, async () =>
+      await Item.find({ codigoClave: { $in: claves.slice(0, 500) }, agotado: true, activo: true }).lean(),
+    );
+    return is.map((i) => ({ codigo: i.codigo, nombre: i.nombre }));
   }
 
   // ---------- para los servicios ----------
@@ -480,6 +541,20 @@ export function crearServicioCatalogo({ Empresa, Item }, auth) {
     importar: envolver(true, async (req, res) =>
       res.status(200).json(await importar({ ...base(req), filas: req.body?.filas, simular: req.body?.simular === true })),
     ),
+    disponibilidad: envolver(false, async (req, res) => {
+      const q = req.query ?? {};
+      const items = await disponibilidad({
+        empresaId: req.auth.empresaId,
+        texto: q.q === undefined || q.q === "" ? undefined : String(q.q),
+        soloAgotados: q.agotados === "1",
+        limite: q.limite,
+        saltar: q.saltar,
+      });
+      res.status(200).json({ items });
+    }),
+    marcarAgotado: envolver(true, async (req, res) =>
+      res.status(200).json(await marcarAgotado({ ...base(req), itemId: req.params?.itemId, agotado: req.body?.agotado })),
+    ),
   };
 
   return {
@@ -493,6 +568,9 @@ export function crearServicioCatalogo({ Empresa, Item }, auth) {
     reactivar,
     instantanea,
     importar,
+    marcarAgotado,
+    disponibilidad,
+    agotadosDe,
     registrarEsquema,
     esquemas,
     moneda,

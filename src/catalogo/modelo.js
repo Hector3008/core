@@ -11,6 +11,11 @@ export const itemSchema = new mongoose.Schema(
     atributos: { type: mongoose.Schema.Types.Mixed, default: {} }, // lo propio de cada servicio (ver atributos.js)
     activo: { type: Boolean, default: true },
     desactivadoTs: { type: Date, default: null },
+    // Disponibilidad del día (5.60): cocina marca «agotado» lo que no hay hoy. No es una baja: el ítem sigue en el
+    // catálogo y se puede pedir; solo avisa. Quién y cuándo lo marcó se guarda para saber a quién preguntar.
+    agotado: { type: Boolean, default: false },
+    agotadoTs: { type: Date, default: null },
+    agotadoPor: { type: mongoose.Schema.Types.ObjectId, default: null },
     creadoPor: { type: mongoose.Schema.Types.ObjectId, default: null },
   },
   { timestamps: true, minimize: false },

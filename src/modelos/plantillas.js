@@ -16,7 +16,7 @@ export const PLANTILLAS = {
       "cliente:cuenta",
       "fidelizacion:canjear",
     ],
-    cocina: ["estacion:cocina", "documento:leer", "documento:editar"],
+    cocina: ["estacion:cocina", "documento:leer", "documento:editar", "catalogo:disponibilidad"],
     delivery: [
       "estacion:delivery",
       "documento:leer",
