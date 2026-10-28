@@ -7,6 +7,9 @@
  *   core.clientes.montarRutas(clientes);
  *   gateway.use("/clientes", clientes);
  *
+
+ * Importación en bloque (5.64): POST /importar  cliente:gestionar  { filas, simular? } → { creados, actualizados, inactivos, omitidos?, simulado }
+ *
  * Búsqueda: GET /?q=texto (nombre, teléfono, correo o @usuario de una red), &inactivos=1, &limite=, &saltar=
  *
  * Cuenta y puntos del cliente (arquitectura 5.25), si el núcleo trae esos servicios:
@@ -58,6 +61,7 @@ export function montarRutasClientes(router, { clientes, autenticar, requierePerm
     if (referidos) router.get("/referidos", ...gestionarPuntos, referidos.manejadores.listar);
   }
 
+  router.post("/importar", ...gestionar, m.importar); // antes de /:clienteId
   router.get("/", ...leer, m.listar);
   router.post("/", ...crear, m.crear);
   router.get("/:clienteId", ...leer, m.obtener);

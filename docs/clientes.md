@@ -40,7 +40,7 @@ Se admite lo que la persona pegue: `@Ana.Perez`, `ana.perez` o `https://www.inst
 | `cliente:leer` | Ver y buscar (lo piden las rutas). |
 | `cliente:crear` | Dar de alta. La plantilla de mesero lo trae. |
 | `cliente:editar` | Corregir la ficha. |
-| `cliente:gestionar` | Baja, reactivar, consentimientos y anonimizar. |
+| `cliente:gestionar` | Baja, reactivar, consentimientos, anonimizar e importar en bloque. |
 
 `cliente:*` los incluye todos (la plantilla de siscore ya lo usa). Como en empleados, cada operación que cambia algo recibe `actor = { usuarioId, permisos }` y comprueba su permiso, así que protege aunque una ruta se monte sin `requierePermiso`. Las empresas ya creadas conservan sus roles: para que su mesero pueda crear clientes, hay que editar el rol con `core.empleados.editarRol`.
 
@@ -62,7 +62,7 @@ Se admite lo que la persona pegue: `@Ana.Perez`, `ana.perez` o `https://www.inst
 - `cliente:leer`: `GET /` (`?q=`, `&inactivos=1`, `&limite=`, `&saltar=`), `GET /:clienteId`.
 - `cliente:crear`: `POST /`.
 - `cliente:editar`: `PUT /:clienteId`.
-- `cliente:gestionar`: `PUT /:clienteId/consentimientos/:finalidad` (`{ otorgado, medio }`), `POST /:clienteId/desactivar`, `POST /:clienteId/reactivar`, `POST /:clienteId/anonimizar`.
+- `cliente:gestionar`: `PUT /:clienteId/consentimientos/:finalidad` (`{ otorgado, medio }`), `POST /:clienteId/desactivar`, `POST /:clienteId/reactivar`, `POST /:clienteId/anonimizar`, `POST /importar` (`{ filas, simular? }`, ver más abajo; se registra antes de `/:clienteId`).
 
 Todas llevan `autenticar → requierePermiso → handler`; las que escriben exigen `x-requested-with`.
 
@@ -76,3 +76,14 @@ gateway.use("/clientes", clientes);
 ```
 
 Y en `db.js`, junto a los otros `listo()`: `await core.clientes.listo();` (crea los índices únicos de teléfono y correo, de los que depende la detección de duplicados).
+
+## Importar en bloque (5.64)
+
+`importar({ empresaId, actor, filas, simular? })` crea los clientes nuevos y actualiza los que ya existen, reconociéndolos por **teléfono o correo**. Hasta 500 filas por llamada; cada una `{ nombre, telefono?, paisTelefono?, correo?, redes?, identificacion?, direccion? }`.
+
+- Cada fila exige teléfono o correo (con eso se reconoce a la persona la próxima vez) y, si es nueva, nombre. Una celda vacía no borra nada; la importación nunca quita datos.
+- Si el teléfono de la fila es de un cliente y el correo de otro, es un conflicto y la fila se rechaza. Un teléfono o un correo repetido dentro del mismo lote también (se comparan ya normalizados).
+- Todo o nada: si una fila es inválida no se guarda ninguna y `IMPORTACION_INVALIDA` (400) trae `{ total, errores: [{ fila, error }] }` (hasta 50, filas desde 1). `simular: true` valida y cuenta sin escribir.
+- Respuesta: `{ creados, actualizados, inactivos: [filas], omitidos?: [filas], simulado }`. Los desactivados se actualizan pero no se reactivan; `omitidos` son filas que chocaron con un cambio simultáneo.
+- No importa consentimientos ni preferencias: nadie queda con «programa de puntos» o «etiquetado» otorgado por venir en una hoja.
+- Las escrituras no son una transacción; repetir la importación es seguro.

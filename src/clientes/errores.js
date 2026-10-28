@@ -4,6 +4,7 @@
 //   NO_ENCONTRADO 404
 //   CLIENTE_DUPLICADO 409 (trae `detalle: { campo, clienteId }`)   ESTADO_INVALIDO 409
 //   REGISTRO_BLOQUEADO 409 (auto-registro de un cliente que ya tiene ficha: no revela de quién)
+//   IMPORTACION_INVALIDA 400 (trae `detalle: { total, errores: [{ fila, error }] }`; no se guardó nada)
 const STATUS = {
   DATOS_INVALIDOS: 400,
   PERMISO_INSUFICIENTE: 403,
@@ -11,6 +12,7 @@ const STATUS = {
   CLIENTE_DUPLICADO: 409,
   ESTADO_INVALIDO: 409,
   REGISTRO_BLOQUEADO: 409,
+  IMPORTACION_INVALIDA: 400,
 };
 
 export class ErrorCliente extends Error {

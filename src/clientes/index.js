@@ -4,6 +4,7 @@ import { ErrorAuth } from "../auth/errores.js";
 import { PAIS_POR_DEFECTO, normalizarTelefono } from "../telefono.js";
 import { ErrorCliente } from "./errores.js";
 import { REDES_SOPORTADAS } from "./redes.js";
+import { MAX_FILAS_IMPORTACION, MAX_ERRORES_IMPORTACION, clavesDe, planificar } from "./importar.js";
 import {
   FINALIDADES,
   idValido,
@@ -28,7 +29,7 @@ const MAX_HISTORIAL = 100;
  *   cliente:leer      → ver y buscar (lo comprueban las rutas; las lecturas internas no piden actor)
  *   cliente:crear     → dar de alta
  *   cliente:editar    → corregir la ficha
- *   cliente:gestionar → baja, reactivar, consentimientos y anonimizar
+ *   cliente:gestionar → baja, reactivar, consentimientos, anonimizar e importar en bloque
  */
 export function crearServicioClientes({ Empresa, Cliente, SesionCliente }, auth) {
   // ---------- ayudas ----------
@@ -176,6 +177,85 @@ export function crearServicioClientes({ Empresa, Cliente, SesionCliente }, auth)
       throw await traducirDuplicado(e, empresaId, d);
     }
     return obtener({ empresaId, clienteId });
+  }
+
+  // ---------- importar ----------
+  /**
+   * Carga en bloque (por ejemplo desde un .xlsx): crea los clientes nuevos y actualiza los que ya existen,
+   * reconociéndolos por teléfono o por correo. Hasta 500 filas por llamada. Cada fila:
+   * `{ nombre, telefono?, paisTelefono?, correo?, redes?, identificacion?, direccion? }`.
+   *  - Cada fila exige teléfono o correo y, si es nueva, nombre. Una celda vacía no borra nada.
+   *  - Fila existente: solo cambia lo que traiga. No reactiva a los desactivados (los lista en `inactivos`).
+   *  - Se valida TODO antes de escribir: si una fila es inválida no se guarda ninguna y el error
+   *    (IMPORTACION_INVALIDA) lista las filas con su problema (número de fila desde 1).
+   *  - No importa consentimientos ni preferencias: nadie queda con «programa de puntos» u «etiquetado» otorgado.
+   *  - `simular: true` valida y cuenta sin escribir.
+   * Las escrituras no son una transacción: si la base fallara a mitad, repetir la importación es seguro.
+   */
+  async function importar({ empresaId, actor, filas, simular = false }) {
+    exigir(actor, "cliente:gestionar");
+    const paisEmpresa = await paisDe(empresaId);
+    if (!Array.isArray(filas) || !filas.length || filas.length > MAX_FILAS_IMPORTACION)
+      throw new ErrorCliente("DATOS_INVALIDOS", `filas: una lista de 1 a ${MAX_FILAS_IMPORTACION} filas`);
+
+    const { telefonos, correos } = clavesDe(filas, paisEmpresa);
+    const o = [];
+    if (telefonos.length) o.push({ telefono: { $in: telefonos } });
+    if (correos.length) o.push({ correo: { $in: correos } });
+    const existentes = o.length ? await conEmpresa(empresaId, async () => await Cliente.find({ $or: o }).lean()) : [];
+
+    const { plan, errores } = planificar(filas, { paisEmpresa, existentes });
+    if (errores.length) {
+      errores.sort((a, b) => a.fila - b.fila);
+      throw new ErrorCliente("IMPORTACION_INVALIDA", `${errores.length} fila(s) inválida(s): no se guardó nada`, {
+        total: errores.length,
+        errores: errores.slice(0, MAX_ERRORES_IMPORTACION),
+      });
+    }
+
+    const inactivos = plan.filter((p) => p.previo && p.previo.activo === false).map((p) => p.fila);
+    const resumen = {
+      creados: plan.filter((p) => !p.previo).length,
+      actualizados: plan.filter((p) => p.previo).length,
+      inactivos,
+      simulado: !!simular,
+    };
+    if (simular) return resumen;
+
+    let creados = 0;
+    let actualizados = 0;
+    const omitidos = [];
+    await conEmpresa(empresaId, async () => {
+      for (const { fila, d, previo } of plan) {
+        try {
+          if (!previo) {
+            const doc = { nombre: d.nombre, creadoPor: actor.usuarioId ?? null };
+            for (const k of ["telefono", "telefonoPais", "correo", "identificacion", "direccion"]) if (d[k] !== undefined) doc[k] = d[k];
+            const redes = limpiarRedes(d.redes);
+            if (Object.keys(redes).length) doc.redes = redes;
+            await Cliente.create(doc);
+            creados++;
+          } else {
+            const $set = {};
+            for (const k of ["nombre", "telefono", "telefonoPais", "correo", "identificacion", "direccion"]) if (d[k] !== undefined) $set[k] = d[k];
+            for (const [red, valor] of Object.entries(d.redes ?? {})) if (valor) $set[`redes.${red}`] = valor;
+            if (Object.keys($set).length) {
+              const r = await Cliente.updateOne({ _id: previo._id, anonimizadoTs: null }, { $set });
+              if (!r.matchedCount) {
+                omitidos.push(fila);
+                continue;
+              }
+            }
+            actualizados++;
+          }
+        } catch (e) {
+          // Otra persona creó o cambió a alguien con ese teléfono o correo entre la validación y ahora: no se pisa.
+          if (e?.code === 11000) omitidos.push(fila);
+          else throw e;
+        }
+      }
+    });
+    return { ...resumen, creados, actualizados, omitidos, simulado: false };
   }
 
   // ---------- búsqueda ----------
@@ -415,6 +495,9 @@ export function crearServicioClientes({ Empresa, Cliente, SesionCliente }, auth)
     reactivar: envolver(true, async (req, res) =>
       res.status(200).json(await reactivar({ ...base(req), clienteId: req.params?.clienteId })),
     ),
+    importar: envolver(true, async (req, res) =>
+      res.status(200).json(await importar({ ...base(req), filas: req.body?.filas, simular: req.body?.simular === true })),
+    ),
     anonimizar: envolver(true, async (req, res) =>
       res.status(200).json(await anonimizar({ ...base(req), clienteId: req.params?.clienteId })),
     ),
@@ -424,6 +507,7 @@ export function crearServicioClientes({ Empresa, Cliente, SesionCliente }, auth)
     crear,
     obtener,
     actualizar,
+    importar,
     listar,
     buscar,
     desactivar,
