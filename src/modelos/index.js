@@ -18,6 +18,7 @@ import { promocionSchema } from "../promociones/modelo.js";
 import { anuncioSchema } from "../anuncios/modelo.js";
 import { resenaSchema } from "../resenas/modelo.js";
 import { referidoSchema } from "../referidos/modelo.js";
+import { solicitudSchema, tokenPasswordSchema } from "../solicitudes/modelo.js";
 
 // core.model(nombre, schema, coleccion?) ya existe en la pieza 1
 export function registrarModelos(core) {
@@ -48,5 +49,7 @@ export function registrarModelos(core) {
     Anuncio: core.model("Anuncio", anuncioSchema, "anuncios"),
     Resena: core.model("Resena", resenaSchema, "resenas"),
     Referido: core.model("Referido", referidoSchema, "referidos"),
+    SolicitudEmpresa: core.model("SolicitudEmpresa", solicitudSchema, "solicitudes_empresa"),
+    TokenPassword: core.model("TokenPassword", tokenPasswordSchema, "tokens_password"),
   };
 }

@@ -20,6 +20,7 @@ import { montarRutasPromociones } from "./promociones/rutas.js";
 import { crearServicioAnuncios } from "./anuncios/index.js";
 import { montarRutasAnuncios } from "./anuncios/rutas.js";
 import { crearServicioResenas } from "./resenas/index.js";
+import { crearServicioSolicitudes } from "./solicitudes/index.js";
 import { montarRutasResenas } from "./resenas/rutas.js";
 
 export {
@@ -41,6 +42,7 @@ export { calcularDescuento } from "./fidelizacion/beneficios.js";
 export { ErrorPromocion } from "./promociones/errores.js";
 export { ErrorAnuncio } from "./anuncios/errores.js";
 export { ErrorResena } from "./resenas/errores.js";
+export { ErrorSolicitud } from "./solicitudes/errores.js";
 export { evaluarPromociones } from "./promociones/evaluador.js";
 export { ZONAS, zonaDeEmpresa, zonaValida } from "./zona.js";
 export { marcaPublica } from "./marca.js";
@@ -106,6 +108,7 @@ export function createCore({ connection, plugins = [], auth = {} } = {}) {
   core.promociones = crearServicioPromociones(core.modelos, core.auth);
   core.anuncios = crearServicioAnuncios(core.modelos, core.auth);
   core.resenas = crearServicioResenas(core.modelos, core.auth);
+  core.solicitudes = crearServicioSolicitudes(core.modelos, core.empresas);
   core.auth.montarRutas = (router) => montarRutas(router, core);
   core.empleados.montarRutas = (router) => montarRutasEmpleados(router, core);
   core.clientes.montarRutas = (router) => montarRutasClientes(router, core);
