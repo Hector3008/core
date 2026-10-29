@@ -20,3 +20,21 @@
 - Nombres y datos de texto se guardan en una sola línea, sin caracteres de control (van a correos).
 - Errores: `ErrorSolicitud` con `codigo` y `status` (`DATOS_INVALIDOS` 400, `ENLACE_INVALIDO` 404, `ENLACE_VENCIDO` 410, `SLUG_OCUPADO` / `ESTADO_INVALIDO` / `CUENTA_SUSPENDIDA` 409, `DEMASIADAS_SOLICITUDES` 429).
 - El gateway llama a `core.solicitudes.listo()` solo si quiere esperar los índices; los modelos crean los suyos al conectar.
+
+## Operador y recuperación de contraseña (5.66 y 5.67)
+
+La identidad del operador la decide el gateway (enlace al correo `OPERADOR_CORREO`); el núcleo no tiene permisos de empresa para esto y **no expone nada por HTTP**: son funciones para que el gateway las llame.
+
+| Función | Qué hace |
+|---|---|
+| `listar({estado, limite, saltar})` | Solicitudes de la más nueva a la más vieja. `estado`: `pendiente` (incluye `procesando` e `incompleta`), `aprobada`, `rechazada`; sin él, todas. Marca `vencida`. Límite 1–200. |
+| `contarPendientes()` | Pendientes o a medias que todavía no vencieron. |
+| `aprobarPorId(id)` / `rechazarPorId(id)` | Lo mismo que `aprobar(token)` / `rechazar(token)` (misma lógica atómica y reanudable). Un id mal formado da `DATOS_INVALIDOS`; uno inexistente, `ENLACE_INVALIDO`. |
+| `listarEmpresas({texto, limite, saltar})` | Empresas de la más nueva a la más vieja con sus administradores activos. `texto` busca por nombre (como texto literal, no como expresión regular) o por dirección web exacta. |
+| `fijarActiva({empresaId, activa})` | Suspende (`false`) o reactiva (`true`) una empresa. No borra nada. |
+| `reenviarAcceso({empresaId, usuarioId})` | Enlace nuevo de contraseña (tipo `acceso`, 14 días) para un **administrador activo de esa empresa**; anula los enlaces sin usar de esa persona. Devuelve `{correo, nombre, empresa, token, vence}`; el token solo existe en esa respuesta. |
+| `solicitarRecuperacion({correo})` | «Olvidé mi contraseña». Con una cuenta activa emite un enlace de **1 hora** (tipo `recuperacion`) y devuelve `{correo, nombre, token, vence}`; si el correo no existe, está mal formado, la cuenta está suspendida o ya hubo un pedido hace menos de 1 minuto, devuelve `null`. Quien llama debe responder **igual** en todos los casos. |
+
+`verAcceso(token)` ahora devuelve también `tipo` (`acceso` | `recuperacion`). `establecerPassword` además **cierra todas las sesiones** de esa persona (también las de tablet) y devuelve `sesionesCerradas`; si la política de contraseña falla no gasta el enlace ni cierra nada.
+
+Modelo: `tokens_password` suma `tipo` (por omisión `acceso`) y `createdAt` explícito.

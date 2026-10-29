@@ -6,6 +6,7 @@ import { crearServicioSolicitudes, MAX_PENDIENTES, VIGENCIA_SOLICITUD_MS, VIGENC
 import { ErrorSolicitud } from "../src/solicitudes/errores.js";
 import { validarSolicitud } from "../src/solicitudes/validacion.js";
 import { verificarPassword } from "../src/password.js";
+import { empresaActual } from "../src/tenancy.js";
 
 // ---------- almacén falso ----------
 function coleccion() {
@@ -14,10 +15,12 @@ function coleccion() {
   const igual = (a, b) => String(a) === String(b);
   const coincide = (d, f) =>
     Object.entries(f).every(([k, v]) => {
+      if (k === "$or") return v.some((g) => coincide(d, g));
       const x = d[k];
       if (v && typeof v === "object" && !(v instanceof Date)) {
         if ("$in" in v) return v.$in.some((y) => igual(x, y));
         if ("$gt" in v) return x > v.$gt;
+        if ("$regex" in v) return new RegExp(v.$regex, v.$options).test(x ?? "");
       }
       return v === null ? x === null || x === undefined : igual(x, v);
     });
@@ -29,8 +32,31 @@ function coleccion() {
     const o = { select: () => o, lean: () => o, then: (ok, ko) => Promise.resolve().then(() => structuredClone(fn())).then(ok, ko) };
     return o;
   };
+  const lista = (f) => {
+    let r = filas.filter((d) => coincide(d, f)), ord = null, sk = 0, lim = Infinity;
+    const o = {
+      sort: (x) => ((ord = x), o),
+      skip: (n) => ((sk = n), o),
+      limit: (n) => ((lim = n), o),
+      lean: () => o,
+      then: (ok, ko) =>
+        Promise.resolve()
+          .then(() => {
+            if (ord) { const [[k, dir]] = Object.entries(ord); r = [...r].sort((a, b) => (a[k] > b[k] ? 1 : a[k] < b[k] ? -1 : 0) * dir); }
+            return structuredClone(r.slice(sk, sk + lim));
+          })
+          .then(ok, ko),
+    };
+    return o;
+  };
   return {
     filas,
+    find: lista,
+    deleteMany: async (f) => {
+      const l = filas.filter((d) => coincide(d, f));
+      l.forEach((d) => filas.splice(filas.indexOf(d), 1));
+      return { deletedCount: l.length };
+    },
     findOne: (f) => q(() => filas.find((d) => coincide(d, f)) ?? null),
     countDocuments: async (f) => filas.filter((d) => coincide(d, f)).length,
     create: async (doc) => {
@@ -120,7 +146,14 @@ describe("core.solicitudes", () => {
   const T0 = new Date("2026-10-27T12:00:00Z");
   beforeEach(() => {
     ahora = new Date(T0);
-    c = { SolicitudEmpresa: coleccion(), TokenPassword: coleccion(), Empresa: coleccion(), Usuario: coleccion() };
+    c = { SolicitudEmpresa: coleccion(), TokenPassword: coleccion(), Empresa: coleccion(), Usuario: coleccion(), Sesion: coleccion(), Rol: coleccion(), Membresia: coleccion() };
+    // Rol y Membresia son de cada empresa: igual que el plugin de tenencia, sus consultas se acotan a la empresa activa.
+    for (const n of ["Rol", "Membresia"]) {
+      for (const m of ["find", "findOne"]) {
+        const orig = c[n][m];
+        c[n][m] = (f) => orig({ ...f, empresaId: empresaActual() });
+      }
+    }
     empresasLog = [];
     const empresas = {
       crearEmpresa: async (d) => {
@@ -137,6 +170,9 @@ describe("core.solicitudes", () => {
       agregarMiembro: async ({ empresaId, usuarioId, rol }) => {
         if (empresas.fallaMiembro) throw new Error("falla miembro");
         empresasLog.push(["miembro", String(empresaId), String(usuarioId), rol]);
+        let r = c.Rol.filas.find((x) => x.nombre === rol && String(x.empresaId) === String(empresaId));
+        r ??= await c.Rol.create({ nombre: rol, empresaId });
+        await c.Membresia.create({ empresaId, usuarioId, rolId: r._id, activa: true });
       },
     };
     svc = crearServicioSolicitudes(c, empresas, { ahora: reloj });
@@ -286,7 +322,7 @@ describe("core.solicitudes", () => {
     });
 
     it("verAcceso muestra a quién es; con basura, ENLACE_INVALIDO", async () => {
-      assert.deepEqual(await svc.verAcceso(acceso), { correo: "ana@cafeaurora.example", nombre: "Ana Quispe" });
+      assert.deepEqual(await svc.verAcceso(acceso), { correo: "ana@cafeaurora.example", nombre: "Ana Quispe", tipo: "acceso" });
       await rechaza(svc.verAcceso("x"), "ENLACE_INVALIDO");
       await rechaza(svc.verAcceso("a".repeat(43)), "ENLACE_INVALIDO");
     });
@@ -320,6 +356,148 @@ describe("core.solicitudes", () => {
     it("una cuenta suspendida después no puede usarlo", async () => {
       c.Usuario.filas[0].estado = "suspendido";
       await rechaza(svc.establecerPassword({ token: acceso, password: "una-clave-larga-1" }), "ENLACE_INVALIDO");
+    });
+  });
+
+  describe("el operador (5.66)", () => {
+    const aprobada = async (v = {}) => {
+      const { token } = await svc.crear({ ...VALIDA, ...v });
+      return svc.aprobar(token);
+    };
+
+    it("listar filtra por estado, la más nueva primero, y marca las vencidas", async () => {
+      const a = await svc.crear({ ...VALIDA });
+      await svc.crear({ ...VALIDA, slug: "otra-uno", adminCorreo: "b@x.example" });
+      c.SolicitudEmpresa.filas[0].createdAt = new Date(T0.getTime() - 1000);
+      await svc.rechazar(a.token);
+      assert.equal((await svc.listar()).length, 2);
+      assert.deepEqual((await svc.listar({ estado: "pendiente" })).map((x) => x.slug), ["otra-uno"]);
+      assert.deepEqual((await svc.listar({ estado: "rechazada" })).map((x) => x.slug), ["cafe-aurora"]);
+      await rechaza(svc.listar({ estado: "cualquiera" }), "DATOS_INVALIDOS");
+      ahora = new Date(T0.getTime() + VIGENCIA_SOLICITUD_MS + 1);
+      assert.equal((await svc.listar({ estado: "pendiente" }))[0].vencida, true);
+      assert.equal(await svc.contarPendientes(), 0);
+    });
+
+    it("aprobarPorId y rechazarPorId hacen lo mismo que el enlace del correo", async () => {
+      await svc.crear({ ...VALIDA });
+      const id = c.SolicitudEmpresa.filas[0]._id;
+      const r = await svc.aprobarPorId(id);
+      assert.match(r.tokenAcceso, /^[A-Za-z0-9_-]{43}$/);
+      assert.equal(c.Empresa.filas.length, 1);
+      await rechaza(svc.rechazarPorId(id), "ESTADO_INVALIDO");
+      await rechaza(svc.aprobarPorId("no es un id!"), "DATOS_INVALIDOS");
+      await rechaza(svc.aprobarPorId("a".repeat(24)), "ENLACE_INVALIDO");
+      await svc.crear({ ...VALIDA, slug: "dos-uno", adminCorreo: "b@x.example" });
+      const r2 = await svc.rechazarPorId(c.SolicitudEmpresa.filas[1]._id);
+      assert.equal(r2.adminCorreo, "b@x.example");
+    });
+
+    it("listarEmpresas muestra empresa y administradores; busca por nombre o dirección", async () => {
+      await aprobada();
+      await aprobada({ nombre: "Panadería Sol", slug: "panaderia-sol", adminCorreo: "luis@sol.example", adminNombre: "Luis" });
+      const todas = await svc.listarEmpresas();
+      assert.equal(todas.length, 2);
+      const sol = todas.find((e) => e.slug === "panaderia-sol");
+      assert.deepEqual(sol.admins.map((a) => a.correo), ["luis@sol.example"]);
+      assert.equal(todas.find((e) => e.slug === "cafe-aurora").admins[0].correo, "ana@cafeaurora.example");
+      assert.deepEqual((await svc.listarEmpresas({ texto: "pan" })).map((e) => e.slug), ["panaderia-sol"]);
+      assert.deepEqual((await svc.listarEmpresas({ texto: "cafe-aurora" })).map((e) => e.slug), ["cafe-aurora"]);
+      assert.equal((await svc.listarEmpresas({ texto: ".*" })).length, 0); // el texto no es una expresión regular
+      assert.equal((await svc.listarEmpresas({ limite: 1 })).length, 1);
+    });
+
+    it("fijarActiva suspende y reactiva; exige booleano y empresa real", async () => {
+      await aprobada();
+      const id = c.Empresa.filas[0]._id;
+      await svc.fijarActiva({ empresaId: id, activa: false });
+      assert.equal(c.Empresa.filas[0].activa, false);
+      assert.equal((await svc.listarEmpresas())[0].activa, false);
+      await svc.fijarActiva({ empresaId: id, activa: true });
+      assert.equal(c.Empresa.filas[0].activa, true);
+      await rechaza(svc.fijarActiva({ empresaId: id, activa: "no" }), "DATOS_INVALIDOS");
+      await rechaza(svc.fijarActiva({ empresaId: "b".repeat(24), activa: false }), "ENLACE_INVALIDO");
+    });
+
+    it("reenviarAcceso: enlace nuevo de 14 días, anula el anterior y solo vale para administradores de ESA empresa", async () => {
+      const r = await aprobada();
+      const e = c.Empresa.filas[0]._id, u = c.Usuario.filas[0]._id;
+      const n = await svc.reenviarAcceso({ empresaId: e, usuarioId: u });
+      assert.equal(n.correo, "ana@cafeaurora.example");
+      assert.equal(n.vence - T0, VIGENCIA_ACCESO_MS);
+      assert.equal(n.empresa, "Café Aurora");
+      await rechaza(svc.verAcceso(r.tokenAcceso), "ENLACE_INVALIDO"); // el anterior ya no sirve
+      assert.equal((await svc.verAcceso(n.token)).tipo, "acceso");
+      // otra empresa: Ana no es su administradora
+      await aprobada({ slug: "otra-emp", adminCorreo: "z@z.example" });
+      const otra = c.Empresa.filas[1]._id;
+      await rechaza(svc.reenviarAcceso({ empresaId: otra, usuarioId: u }), "ENLACE_INVALIDO");
+      await rechaza(svc.reenviarAcceso({ empresaId: e, usuarioId: "c".repeat(24) }), "ENLACE_INVALIDO");
+      c.Usuario.filas[0].estado = "suspendido";
+      await rechaza(svc.reenviarAcceso({ empresaId: e, usuarioId: u }), "CUENTA_SUSPENDIDA");
+    });
+  });
+
+  describe("recuperar la contraseña (5.67)", () => {
+    let u;
+    beforeEach(async () => {
+      const { token } = await svc.crear({ ...VALIDA });
+      const r = await svc.aprobar(token);
+      await svc.establecerPassword({ token: r.tokenAcceso, password: "clave-original-1" });
+      u = c.Usuario.filas[0];
+    });
+
+    it("con un correo conocido emite un enlace de 1 hora; el correo se normaliza", async () => {
+      const r = await svc.solicitarRecuperacion({ correo: "  ANA@cafeaurora.example " });
+      assert.match(r.token, /^[A-Za-z0-9_-]{43}$/);
+      assert.equal(r.correo, "ana@cafeaurora.example");
+      assert.equal(r.vence - T0, 60 * 60 * 1000);
+      const fila = c.TokenPassword.filas.at(-1);
+      assert.equal(fila.tipo, "recuperacion");
+      assert.equal(fila.tokenHash, hashDe(r.token));
+      assert.ok(!JSON.stringify(c.TokenPassword.filas).includes(r.token));
+      assert.equal((await svc.verAcceso(r.token)).tipo, "recuperacion");
+    });
+
+    it("sin cuenta, suspendida, con basura o un segundo pedido en menos de un minuto: null (quien llama responde igual)", async () => {
+      assert.equal(await svc.solicitarRecuperacion({ correo: "nadie@x.example" }), null);
+      for (const malo of [undefined, null, 5, "", "sin-arroba", "a@b", "x".repeat(300) + "@a.example", { $ne: "" }]) assert.equal(await svc.solicitarRecuperacion({ correo: malo }), null);
+      assert.ok(await svc.solicitarRecuperacion({ correo: "ana@cafeaurora.example" }));
+      assert.equal(await svc.solicitarRecuperacion({ correo: "ana@cafeaurora.example" }), null); // espera de 1 minuto
+      ahora = new Date(T0.getTime() + 61 * 1000);
+      assert.ok(await svc.solicitarRecuperacion({ correo: "ana@cafeaurora.example" }));
+      u.estado = "suspendido";
+      ahora = new Date(T0.getTime() + 10 * 60 * 1000);
+      assert.equal(await svc.solicitarRecuperacion({ correo: "ana@cafeaurora.example" }), null);
+    });
+
+    it("un enlace nuevo anula el anterior; vence a la hora", async () => {
+      const a = await svc.solicitarRecuperacion({ correo: "ana@cafeaurora.example" });
+      ahora = new Date(T0.getTime() + 2 * 60 * 1000);
+      const b = await svc.solicitarRecuperacion({ correo: "ana@cafeaurora.example" });
+      await rechaza(svc.verAcceso(a.token), "ENLACE_INVALIDO");
+      ahora = new Date(T0.getTime() + 2 * 60 * 1000 + 60 * 60 * 1000 + 1);
+      await rechaza(svc.verAcceso(b.token), "ENLACE_VENCIDO");
+    });
+
+    it("cambiar la contraseña cierra TODAS las sesiones de esa persona y solo las suyas", async () => {
+      await c.Sesion.create({ usuarioId: u._id, tokenHash: "s1" });
+      await c.Sesion.create({ usuarioId: u._id, tokenHash: "s2" });
+      await c.Sesion.create({ usuarioId: "otro", tokenHash: "s3" });
+      const r = await svc.solicitarRecuperacion({ correo: "ana@cafeaurora.example" });
+      const res = await svc.establecerPassword({ token: r.token, password: "clave-nueva-larga-2" });
+      assert.equal(res.sesionesCerradas, 2);
+      assert.deepEqual(c.Sesion.filas.map((x) => x.tokenHash), ["s3"]);
+      assert.ok(await verificarPassword("clave-nueva-larga-2", c.Usuario.filas[0].passwordHash));
+      await rechaza(svc.establecerPassword({ token: r.token, password: "otra-clave-larga-3" }), "ENLACE_INVALIDO"); // un solo uso
+    });
+
+    it("una política de contraseña incumplida no gasta el enlace ni cierra sesiones", async () => {
+      await c.Sesion.create({ usuarioId: u._id, tokenHash: "s1" });
+      const r = await svc.solicitarRecuperacion({ correo: "ana@cafeaurora.example" });
+      await rechaza(svc.establecerPassword({ token: r.token, password: "corta" }), "DATOS_INVALIDOS");
+      assert.equal(c.Sesion.filas.length, 1);
+      assert.ok(await svc.verAcceso(r.token));
     });
   });
 });

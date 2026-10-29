@@ -32,6 +32,7 @@ export const tokenPasswordSchema = marcarGlobal(
   new mongoose.Schema(
     {
       usuarioId: { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
+      tipo: { type: String, enum: ["acceso", "recuperacion"], default: "acceso" }, // acceso: lo emite el sistema o el operador; recuperacion: «olvidé mi contraseña»
       tokenHash: { type: String, required: true, unique: true },
       expira: { type: Date, required: true, index: { expireAfterSeconds: 60 * 60 * 24 * 30 } }, // se borra a los 30 días de vencer
       usadoTs: { type: Date, default: null },
