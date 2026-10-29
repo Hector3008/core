@@ -14,7 +14,7 @@ describe("validarPromocion", () => {
     assert.deepEqual(validarPromocion({ ...dos, nombre: "  2x1 en lattes  " }), {
       nombre: "2x1 en lattes", descripcion: null, activa: true, prioridad: 100, acumulable: false, tipo: "nxm",
       objetivo: { itemCodigo: "LATTE", categoria: null }, disparador: null, n: 2, m: 1, efecto: null, valor: null,
-      vigencia: null, dias: null, horario: null,
+      vigencia: null, dias: null, horario: null, topes: null,
     });
   });
 

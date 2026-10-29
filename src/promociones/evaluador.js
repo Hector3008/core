@@ -12,6 +12,9 @@ import { momentoLocal } from "../zona.js";
 //     promociones:  las de la empresa, ya validadas ({ id, nombre, activa, prioridad, acumulable, tipo, objetivo,
 //                   disparador, n, m, efecto, valor, vigencia, dias, horario })
 //     ahora:        el instante (Date); zona: el nombre IANA de la empresa
+//     cupos:        (5.44, opcional) { [idPromocion]: { max, motivo } } cuántas unidades PUEDE todavía rebajar cada promoción
+//                   en este cálculo por los topes que dependen de usos anteriores (diario, por cliente); `motivo` dice cuál
+//                   manda («dia», «cliente», «sin_cliente»). El tope por pedido (`promo.topes.porPedido`) se aplica aquí mismo.
 //
 // Cómo decide, en una frase: se mira cada promoción vigente por orden de prioridad, y reparte su descuento entre las
 // unidades (no entre las líneas) que le corresponden; cada unidad recibe a lo sumo una promoción, salvo que ambas
@@ -59,7 +62,7 @@ function montoDe(efecto, valor, actual) {
 
 const aMoneda = (centavos) => Math.round(centavos) / 100;
 
-export function evaluarPromociones({ lineas, promociones, ahora = new Date(), zona = "UTC" }) {
+export function evaluarPromociones({ lineas, promociones, ahora = new Date(), zona = "UTC", cupos = {} }) {
   if (!Array.isArray(lineas)) throw new ErrorPromocion("DATOS_INVALIDOS", "lineas: una lista");
   const momento = momentoLocal(ahora, zona);
 
@@ -110,17 +113,51 @@ export function evaluarPromociones({ lineas, promociones, ahora = new Date(), zo
   };
   const deLinea = (selector) => (u) => coincide(selector, lineas[u.li]);
 
+  // Topes de usos (5.44): cada unidad rebajada es un uso. El tope por pedido sale de la propia promoción; los de día y
+  // cliente los calcula quien llama (necesitan contadores) y llegan en `cupos`. Manda el más chico.
+  const usosPorPromo = new Map();
+  const topadas = new Map();
+  const limiteDe = (promo) => {
+    let mejor = null;
+    const pedido = promo.topes?.porPedido;
+    if (Number.isInteger(pedido)) mejor = { max: pedido, motivo: "pedido" };
+    const c = cupos?.[promo.id];
+    if (c && Number.isInteger(c.max) && (!mejor || c.max < mejor.max)) mejor = { max: Math.max(0, c.max), motivo: c.motivo ?? "dia" };
+    return mejor;
+  };
+  /** ¿Cabe una unidad más de esta promoción? Si no, queda anotado que el tope la frenó. */
+  const cabe = (promo) => {
+    const lim = limiteDe(promo);
+    if (!lim || (usosPorPromo.get(promo.id) ?? 0) < lim.max) return true;
+    if (!topadas.has(promo.id)) topadas.set(promo.id, { id: promo.id, nombre: promo.nombre, motivo: lim.motivo });
+    return false;
+  };
+  const aplicarConTope = (u, promo, monto) => {
+    aplicar(u, promo, monto);
+    if (monto > 0) usosPorPromo.set(promo.id, (usosPorPromo.get(promo.id) ?? 0) + 1);
+  };
+
   for (const promo of vigentes) {
     if (promo.tipo === "directo") {
       for (const u of unidades) {
-        if (deLinea(promo.objetivo)(u) && rige(promo, u.li) && libre(u, promo)) aplicar(u, promo, montoDe(promo.efecto, promo.valor, u.actual));
+        if (deLinea(promo.objetivo)(u) && rige(promo, u.li) && libre(u, promo)) {
+          if (!cabe(promo)) break;
+          aplicarConTope(u, promo, montoDe(promo.efecto, promo.valor, u.actual));
+        }
       }
     } else if (promo.tipo === "nxm") {
       // Lleva n, paga m: en cada grupo de n unidades (de las más caras a las más baratas), las n−m más baratas son gratis.
       const candidatas = unidades.filter((u) => deLinea(promo.objetivo)(u) && rige(promo, u.li) && libre(u, promo)).sort((a, b) => b.actual - a.actual || a.orden - b.orden);
       const grupos = Math.floor(candidatas.length / promo.n);
-      for (let g = 0; g < grupos; g++) {
-        for (const u of candidatas.slice(g * promo.n, (g + 1) * promo.n).slice(promo.m)) aplicar(u, promo, u.actual);
+      let parar = false;
+      for (let g = 0; g < grupos && !parar; g++) {
+        for (const u of candidatas.slice(g * promo.n, (g + 1) * promo.n).slice(promo.m)) {
+          if (!cabe(promo)) {
+            parar = true;
+            break;
+          }
+          aplicarConTope(u, promo, u.actual);
+        }
       }
     } else if (promo.tipo === "combo") {
       // Por cada unidad del disparador, una del objetivo (la más barata primero) lleva el descuento. Una misma unidad
@@ -132,9 +169,10 @@ export function evaluarPromociones({ lineas, promociones, ahora = new Date(), zo
         if (usadas.has(t)) continue;
         const d = disparadores.find((x) => x !== t && !usadas.has(x));
         if (!d) break;
+        if (!cabe(promo)) break;
         usadas.add(t);
         usadas.add(d);
-        aplicar(t, promo, montoDe(promo.efecto, promo.valor, t.actual));
+        aplicarConTope(t, promo, montoDe(promo.efecto, promo.valor, t.actual));
       }
     }
   }
@@ -176,6 +214,7 @@ export function evaluarPromociones({ lineas, promociones, ahora = new Date(), zo
     vigentes: vigentes.map((p) => p.id),
     lineas: resultadoLineas,
     aplicadas: [...porPromo.values()].map((x) => ({ ...x, monto: aMoneda(x.monto) })),
+    topadas: [...topadas.values()], // promociones que un tope de usos frenó (5.44): [{ id, nombre, motivo }]
     totalBase: aMoneda(totalBase),
     descuentoTotal: aMoneda(descuentoTotal),
     total: aMoneda(totalBase - descuentoTotal),

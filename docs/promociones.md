@@ -63,10 +63,28 @@ gateway.use("/promociones", promociones);
 
 ## Límites conocidos
 
-- **No cambia ningún pedido.** Aplicarlas al cobro es 5.42; los topes de usos son 5.44.
-- Sin topes, una promoción puede aplicarse sin límite de veces.
+- **No cambia ningún pedido.** Quien lo hace es el servicio (en `tobt`, 5.42).
+- Sin topes, una promoción puede aplicarse sin límite de veces. `simular` solo aplica el tope por pedido (no mira ni toca los contadores).
 - El catálogo de tipos es cerrado; uno nuevo es una entrada más en `validacion.js` y en el evaluador.
 - `simular` y `evaluar` no comprueban que los códigos existan en el catálogo.
 
 ## Lo que ve el público (5.43)
-`vigentes({ empresaId, ahora? })` (sin actor: lectura pública) devuelve `{ zona, hoy, promociones }` con las promociones **activas que aún no vencieron** (la fecha `hasta` incluida), cada una con los datos de su regla (`tipo`, `objetivo`, `disparador`, `n`, `m`, `efecto`, `valor`, `vigencia`, `dias`, `horario`) y `vigenteAhora` (día, horario y fechas, a la hora de la empresa). Las que empiezan más adelante salen con `vigenteAhora: false`. Nunca expone `prioridad`, `acumulable` ni datos de quién la creó. La carta de `tobt` la usa para mostrar «Promociones» a los clientes.
+`vigentes({ empresaId, ahora? })` (sin actor: lectura pública) devuelve `{ zona, hoy, promociones }` con las promociones **activas que aún no vencieron** (la fecha `hasta` incluida), cada una con los datos de su regla (`tipo`, `objetivo`, `disparador`, `n`, `m`, `efecto`, `valor`, `vigencia`, `dias`, `horario`) y `vigenteAhora` (día, horario y fechas, a la hora de la empresa). Las que empiezan más adelante salen con `vigenteAhora: false`. Nunca expone `prioridad`, `acumulable`, `topes` ni datos de quién la creó. La carta de `tobt` la usa para mostrar «Promociones» a los clientes.
+
+## Topes de usos (5.44)
+Un **uso** es una unidad con descuento (un 2x1 aplicado a 4 lattes son 2 usos). Campo opcional `topes: { diario, porPedido, porCliente }`, cada uno un entero 1–100000 o `null`:
+
+- `porPedido`: máximo de unidades rebajadas en un mismo pedido. Lo resuelve el evaluador solo.
+- `diario`: máximo en toda la empresa por día (día de la zona de la empresa).
+- `porCliente`: máximo por cliente y por día. Un pedido **sin cliente** no recibe esta promoción (aviso `sin_cliente`).
+
+Al evaluar, el evaluador recibe `cupos: { [idPromocion]: { max, motivo } }`, aplica el más chico y devuelve `topadas: [{ id, nombre, motivo }]` con lo que un tope frenó (`pedido`, `dia`, `cliente`, `sin_cliente`).
+
+Contadores (`UsoPromocion`, `usos_promocion`) y reservas por pedido (`ReservaPromocion`, `reservas_promocion`), ambos con tenancy y TTL de 3 días. Flujo de un servicio cada vez que recalcula un pedido abierto:
+
+1. `core.promociones.cupos({ empresaId, referencia, clienteId, ahora })` → cupos de lo que el pedido aún puede tomar (lo ya reservado por él + lo libre).
+2. `evaluar({ …, cupos })`.
+3. `confirmarUsos({ empresaId, referencia, clienteId, usos: { [id]: unidades }, ahora })` deja la reserva del pedido en esos usos. Cada contador se mueve con un `$inc` condicionado al tope, así dos pedidos simultáneos no se pasan; si no cabe devuelve `{ ok: false }` sin cambiar nada (se repite desde 1). Devuelve `previo` para restaurar si luego no se pudo guardar el pedido.
+4. `liberarUsos({ empresaId, referencia })` al anular el pedido.
+
+Reglas: la reserva fija su día en la primera vez (un pedido que cruza la medianoche sigue en su día); si el pedido cambia de cliente, el uso pasa de contador; bajar un tope no quita lo ya concedido; el uso se mantiene aunque el pedido se cobre (no se libera). `confirmarUsos` es idempotente.

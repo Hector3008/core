@@ -9,7 +9,7 @@ export const MAX_PROMOCIONES_ACTIVAS = 100;
 const CODIGO = /^[A-Za-z0-9._\-/]{1,40}$/; // el mismo formato que el código de un ítem del catálogo
 const FECHA = /^\d{4}-\d{2}-\d{2}$/;
 const HORA = /^([01]\d|2[0-3]):([0-5]\d)$/;
-const COMUNES = ["nombre", "descripcion", "activa", "prioridad", "acumulable", "tipo", "vigencia", "dias", "horario"];
+const COMUNES = ["nombre", "descripcion", "activa", "prioridad", "acumulable", "tipo", "vigencia", "dias", "horario", "topes"];
 const POR_TIPO = {
   nxm: ["objetivo", "n", "m"],
   combo: ["disparador", "objetivo", "efecto", "valor"],
@@ -82,6 +82,27 @@ function validarHorario(v) {
   return { desde: v.desde, hasta: v.hasta };
 }
 
+export const MAX_TOPE = 100000;
+const CLAVES_TOPES = ["diario", "porPedido", "porCliente"];
+
+/**
+ * Topes de usos (5.44). Un uso es UNA UNIDAD con descuento: un 2x1 que deja gratis un café gasta 1; un descuento directo a
+ * 3 cafés, 3. `diario`: usos por día en toda la empresa; `porPedido`: usos en un mismo pedido; `porCliente`: usos por
+ * cliente y por día (exige que el pedido tenga cliente). Todos opcionales; sin ninguno, `null`.
+ */
+function validarTopes(t) {
+  if (t === null || t === undefined) return null;
+  if (typeof t !== "object" || Array.isArray(t)) throw malo("topes: { diario?, porPedido?, porCliente? } con enteros");
+  const extra = Object.keys(t).filter((k) => !CLAVES_TOPES.includes(k));
+  if (extra.length) throw malo(`topes: campos no admitidos (${extra.join(", ")})`);
+  const r = {};
+  for (const k of CLAVES_TOPES) {
+    const v = t[k];
+    r[k] = v === null || v === undefined || v === "" ? null : entero(v, `topes.${k}`, 1, MAX_TOPE);
+  }
+  return CLAVES_TOPES.some((k) => r[k] !== null) ? r : null;
+}
+
 /** efecto + valor: porcentaje (más de 0 y hasta 100), monto (más de 0) o gratis (sin valor). */
 function validarEfecto(efecto, valor) {
   if (!EFECTOS.includes(efecto)) throw malo(`efecto: uno de ${EFECTOS.join(", ")}`);
@@ -136,6 +157,7 @@ export function validarPromocion(datos, base = null) {
     vigencia: validarVigencia(d.vigencia),
     dias: validarDias(d.dias),
     horario: validarHorario(d.horario),
+    topes: validarTopes(d.topes),
   };
 
   if (d.tipo === "nxm") {

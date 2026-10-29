@@ -20,7 +20,7 @@ const MAX_LINEAS_SIMULACION = 50;
  *   promocion:leer       → ver las promociones y simular
  *   promocion:gestionar  → crearlas, editarlas, pausarlas
  */
-export function crearServicioPromociones({ Empresa, Promocion }, auth) {
+export function crearServicioPromociones({ Empresa, Promocion, UsoPromocion, ReservaPromocion }, auth) {
   // ---------- ayudas ----------
   const sinActor = () => new ErrorPromocion("PERMISO_INSUFICIENTE", "se requiere quién realiza la operación");
   const exigir = (actor, permiso) => {
@@ -50,6 +50,7 @@ export function crearServicioPromociones({ Empresa, Promocion }, auth) {
     vigencia: p.vigencia ? { desde: p.vigencia.desde ?? null, hasta: p.vigencia.hasta ?? null } : null,
     dias: Array.isArray(p.dias) && p.dias.length ? [...p.dias] : null,
     horario: p.horario?.desde ? { desde: p.horario.desde, hasta: p.horario.hasta } : null,
+    topes: p.topes && (p.topes.diario || p.topes.porPedido || p.topes.porCliente) ? { diario: p.topes.diario ?? null, porPedido: p.topes.porPedido ?? null, porCliente: p.topes.porCliente ?? null } : null,
     creadaTs: p.createdAt ?? null,
     actualizadaTs: p.updatedAt ?? null,
   });
@@ -107,11 +108,166 @@ export function crearServicioPromociones({ Empresa, Promocion }, auth) {
    * Evalúa las líneas de un pedido contra las promociones activas de la empresa, a la hora de la empresa. Es lo que
    * usa un servicio (sin actor: es una operación interna, no una ruta). `lineas`: [{ id?, codigo, categoria?, cantidad, precio }].
    */
-  async function evaluar({ empresaId, lineas, ahora = new Date(), solo = null }) {
+  async function evaluar({ empresaId, lineas, ahora = new Date(), solo = null, cupos = {} }) {
     const empresa = await empresaDe(empresaId);
     const promociones =
       solo ?? (await conEmpresa(empresaId, async () => await Promocion.find({ activa: true }).sort({ prioridad: 1, _id: 1 }).lean())).map(dto);
-    return evaluarPromociones({ lineas, promociones, ahora, zona: zonaDeEmpresa(empresa) });
+    return evaluarPromociones({ lineas, promociones, ahora, zona: zonaDeEmpresa(empresa), cupos });
+  }
+
+
+  // ---------- topes de usos (5.44) ----------
+  //
+  // Un USO es una unidad con descuento. Tres topes opcionales por promoción: `diario` (toda la empresa, por día),
+  // `porPedido` (lo resuelve el evaluador) y `porCliente` (por cliente y por día; el pedido debe tener cliente).
+  // Flujo de un servicio (tobt, 5.44) cada vez que recalcula un pedido abierto:
+  //   1. `cupos(...)`          → cuántas unidades PUEDE rebajar cada promoción con tope de día o de cliente;
+  //   2. `evaluar({ cupos })`  → el descuento ya recortado a esos cupos;
+  //   3. `confirmarUsos(...)`  → toma esos usos de los contadores con un `$inc` condicionado al tope (dos pedidos a la vez
+  //                              no pueden pasarse); si otro se llevó el último cupo, devuelve `ok: false` y se repite desde 1;
+  //   4. si no se pudo guardar el pedido, `confirmarUsos` con el `previo` lo deja como estaba; si se anula, `liberarUsos`.
+  // Cada pedido tiene su RESERVA por promoción (`referencia`): así recalcular sube o baja la diferencia y nunca cuenta dos veces.
+  const DURACION_MS = 3 * 24 * 3600 * 1000;
+  const claveDia = (empresa, ahora) => momentoLocal(ahora, zonaDeEmpresa(empresa)).fecha;
+  const expiraDe = (ahora) => new Date(ahora.getTime() + DURACION_MS);
+  const cl = (v) => (v === undefined || v === null || v === "" ? null : String(v));
+
+  class Denegado extends Error {}
+
+  /** Suma `delta` a un contador. Si sube, solo si no pasa del tope (`$inc` condicionado; el 11000 es «ya existe y no cabe»). */
+  async function mover({ promocionId, dia, clienteId }, delta, tope, ahora, hechos) {
+    if (!delta) return;
+    const clave = { promocionId, dia, clienteId };
+    if (delta > 0) {
+      if (tope !== null && delta > tope) throw new Denegado();
+      const filtro = tope === null ? clave : { ...clave, usos: { $lte: tope - delta } };
+      try {
+        await UsoPromocion.updateOne(filtro, { $inc: { usos: delta }, $setOnInsert: { expira: expiraDe(ahora) } }, { upsert: true });
+      } catch (e) {
+        if (e?.code === 11000) throw new Denegado();
+        throw e;
+      }
+    } else {
+      await UsoPromocion.updateOne({ ...clave, usos: { $gte: -delta } }, { $inc: { usos: delta } });
+    }
+    hechos.push({ clave, delta });
+  }
+  async function deshacer(hechos, ahora) {
+    for (const { clave, delta } of [...hechos].reverse()) {
+      try {
+        if (delta > 0) await UsoPromocion.updateOne({ ...clave, usos: { $gte: delta } }, { $inc: { usos: -delta } });
+        else await UsoPromocion.updateOne(clave, { $inc: { usos: -delta }, $setOnInsert: { expira: expiraDe(ahora) } }, { upsert: true });
+      } catch {
+        /* un contador que no se pudo devolver se corrige solo al día siguiente: la peor consecuencia es un cupo de menos */
+      }
+    }
+  }
+
+  const conTopes = (p) => p.topes && (p.topes.diario || p.topes.porCliente);
+
+  /**
+   * Cuántas unidades más puede rebajar cada promoción con tope de día o de cliente en ESTE pedido (`referencia`): lo que el
+   * pedido ya tiene tomado más lo que queda libre. Nunca baja de lo ya tomado (rebajar un tope no quita descuentos concedidos).
+   * Devuelve `{ [idPromocion]: { max, motivo } }`; `motivo`: «dia», «cliente» o «sin_cliente» (el tope por cliente exige uno).
+   */
+  async function cupos({ empresaId, referencia, clienteId = null, ahora = new Date() }) {
+    const empresa = await empresaDe(empresaId);
+    const hoy = claveDia(empresa, ahora);
+    const cli = cl(clienteId);
+    return await conEmpresa(empresaId, async () => {
+      const promos = (await Promocion.find({ activa: true }).lean()).map(dto).filter(conTopes);
+      if (!promos.length) return {};
+      const reservas = await ReservaPromocion.find({ referencia: String(referencia) }).lean();
+      const salida = {};
+      for (const p of promos) {
+        const r = reservas.find((x) => String(x.promocionId) === p.id) ?? null;
+        const dia = r?.dia ?? hoy;
+        let max = Infinity;
+        let motivo = "dia";
+        if (p.topes.diario) {
+          const c = await UsoPromocion.findOne({ promocionId: p.id, dia, clienteId: null }).lean();
+          max = (r?.usosDiario ?? 0) + Math.max(0, p.topes.diario - (c?.usos ?? 0));
+        }
+        if (p.topes.porCliente) {
+          let tope;
+          if (!cli) tope = 0;
+          else {
+            const c = await UsoPromocion.findOne({ promocionId: p.id, dia, clienteId: cli }).lean();
+            const mio = r?.clienteId === cli ? r.usosCliente ?? 0 : 0;
+            tope = mio + Math.max(0, p.topes.porCliente - (c?.usos ?? 0));
+          }
+          if (tope < max) {
+            max = tope;
+            motivo = cli ? "cliente" : "sin_cliente";
+          }
+        }
+        salida[p.id] = { max, motivo };
+      }
+      return salida;
+    });
+  }
+
+  /**
+   * Deja la reserva de este pedido en `usos` ({ [idPromocion]: unidades con descuento }). Atómico por promoción y con
+   * vuelta atrás si alguna no cabe: `{ ok: false, promocionId }` sin haber cambiado nada. `forzar` omite los topes
+   * (para descuentos YA concedidos que se deben seguir contando). Devuelve `previo` para poder restaurar.
+   */
+  async function confirmarUsos({ empresaId, referencia, clienteId = null, usos = {}, ahora = new Date(), forzar = false }) {
+    const empresa = await empresaDe(empresaId);
+    const hoy = claveDia(empresa, ahora);
+    const cli = cl(clienteId);
+    const ref = String(referencia);
+    return await conEmpresa(empresaId, async () => {
+      const promos = (await Promocion.find({}).lean()).map(dto);
+      const reservas = await ReservaPromocion.find({ referencia: ref }).lean();
+      const ids = new Set([...promos.filter((p) => p.activa && conTopes(p)).map((p) => p.id), ...reservas.map((r) => String(r.promocionId))]);
+      const hechos = [];
+      const previo = {};
+      const hechas = [];
+      try {
+        for (const id of ids) {
+          const p = promos.find((x) => x.id === id) ?? null;
+          const r = reservas.find((x) => String(x.promocionId) === id) ?? null;
+          const n = Math.max(0, Math.trunc(Number(usos[id]) || 0));
+          if (!r && n === 0) continue;
+          const dia = r?.dia ?? hoy;
+          const topeDia = p?.activa && p.topes?.diario ? p.topes.diario : null;
+          const topeCli = p?.activa && p.topes?.porCliente ? p.topes.porCliente : null;
+          // Contadores a los que esta reserva aporta: el del día (si hay tope diario) y el del cliente (si hay tope por cliente y cliente).
+          const objDia = topeDia ? n : 0;
+          const objCli = topeCli && cli ? n : 0;
+          if (topeCli && !cli && n > 0 && !forzar) throw new Denegado();
+          const heldDia = r?.usosDiario ?? 0;
+          await mover({ promocionId: id, dia, clienteId: null }, objDia - heldDia, forzar ? null : topeDia, ahora, hechos);
+          if (r?.clienteId && r.usosCliente && r.clienteId !== cli) await mover({ promocionId: id, dia, clienteId: r.clienteId }, -r.usosCliente, null, ahora, hechos);
+          const heldCli = r?.clienteId === cli ? r.usosCliente ?? 0 : 0;
+          if (cli) await mover({ promocionId: id, dia, clienteId: cli }, objCli - heldCli, forzar ? null : topeCli, ahora, hechos);
+          previo[id] = r ? { usos: Math.max(r.usosDiario ?? 0, r.usosCliente ?? 0) } : { usos: 0 };
+          hechas.push({ id, r, dia, objDia, objCli, cli });
+        }
+      } catch (e) {
+        await deshacer(hechos, ahora);
+        if (e instanceof Denegado) return { ok: false };
+        throw e;
+      }
+      for (const { id, r, dia, objDia, objCli, cli: c } of hechas) {
+        if (objDia === 0 && objCli === 0) {
+          if (r) await ReservaPromocion.deleteOne({ promocionId: id, referencia: ref });
+        } else {
+          await ReservaPromocion.updateOne(
+            { promocionId: id, referencia: ref },
+            { $set: { dia, clienteId: objCli ? c : null, usosDiario: objDia, usosCliente: objCli, expira: expiraDe(ahora) } },
+            { upsert: true },
+          );
+        }
+      }
+      return { ok: true, previo };
+    });
+  }
+
+  /** El pedido se anuló: devuelve todos sus usos. */
+  async function liberarUsos({ empresaId, referencia, ahora = new Date() }) {
+    return await confirmarUsos({ empresaId, referencia, clienteId: null, usos: {}, ahora });
   }
 
   /**
@@ -209,5 +365,5 @@ export function crearServicioPromociones({ Empresa, Promocion }, auth) {
     ),
   };
 
-  return { listar, crear, editar, evaluar, vigentes, simular, manejadores };
+  return { listar, crear, editar, evaluar, vigentes, simular, cupos, confirmarUsos, liberarUsos, manejadores };
 }

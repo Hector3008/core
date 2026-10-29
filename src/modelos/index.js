@@ -14,7 +14,7 @@ import { clienteSchema } from "../clientes/modelo.js";
 import { itemSchema } from "../catalogo/modelo.js";
 import { sesionClienteSchema } from "../cuentas/modelo.js";
 import { movimientoPuntosSchema, beneficioSchema, ticketSchema, retoSchema } from "../fidelizacion/modelo.js";
-import { promocionSchema } from "../promociones/modelo.js";
+import { promocionSchema, usoPromocionSchema, reservaPromocionSchema } from "../promociones/modelo.js";
 import { anuncioSchema } from "../anuncios/modelo.js";
 import { resenaSchema } from "../resenas/modelo.js";
 import { referidoSchema } from "../referidos/modelo.js";
@@ -46,6 +46,8 @@ export function registrarModelos(core) {
     Ticket: core.model("Ticket", ticketSchema, "tickets"),
     Reto: core.model("Reto", retoSchema, "retos"),
     Promocion: core.model("Promocion", promocionSchema, "promociones"),
+    UsoPromocion: core.model("UsoPromocion", usoPromocionSchema, "usos_promocion"),
+    ReservaPromocion: core.model("ReservaPromocion", reservaPromocionSchema, "reservas_promocion"),
     Anuncio: core.model("Anuncio", anuncioSchema, "anuncios"),
     Resena: core.model("Resena", resenaSchema, "resenas"),
     Referido: core.model("Referido", referidoSchema, "referidos"),
