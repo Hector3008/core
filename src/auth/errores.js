@@ -7,6 +7,7 @@
 //   PIN_NO_HABILITADO 403   NO_ENCONTRADO 404   PIN_BLOQUEADO 423
 // Entrar con Google (5.51):
 //   GOOGLE_INVALIDO 401   GOOGLE_NO_DISPONIBLE 503 (no está configurado o Google no responde)
+//   GOOGLE_SIN_CUENTA 403 (5.69: el personal no tiene una cuenta activa con ese correo; un solo error para todos los casos)
 // Contraseña temporal:
 //   CAMBIO_PASSWORD_REQUERIDO 403   SESION_NO_PERMITIDA 403   SIN_PASSWORD 409 (la cuenta entra con Google)
 const STATUS = {
@@ -28,6 +29,7 @@ const STATUS = {
   SESION_NO_PERMITIDA: 403,
   GOOGLE_INVALIDO: 401,
   GOOGLE_NO_DISPONIBLE: 503,
+  GOOGLE_SIN_CUENTA: 403,
   SIN_PASSWORD: 409,
 };
 

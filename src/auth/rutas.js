@@ -14,6 +14,9 @@ export function montarRutas(router, { auth, autenticar, requierePermiso, emplead
 
   // Sesión con contraseña
   router.post("/login", m.login);
+  // Entrar con Google (5.69): `GET /google/config` dice si está activado (y con qué Client ID); `POST /google` abre la sesión
+  router.get("/google/config", m.googleConfig);
+  router.post("/google", m.google);
   router.post("/logout", m.logout);
   router.get("/yo", m.yo);
   router.post("/empresa", m.empresa);

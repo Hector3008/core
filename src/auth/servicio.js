@@ -1,4 +1,5 @@
 import { conEmpresa } from "../tenancy.js";
+import crypto from "node:crypto";
 import { hashPassword, verificarPassword } from "../password.js";
 import { ErrorAuth } from "./errores.js";
 import { generarToken, hashToken } from "./tokens.js";
@@ -10,6 +11,7 @@ import { crearServicioDatos } from "./datos.js";
 import { validarPassword } from "./politica-password.js";
 import { configPinDe } from "./pin-config.js";
 import { validarPaginaPrincipal } from "./preferencias.js";
+import { crearVerificadorGoogle } from "../cuentas/google.js";
 
 const MIN = 60_000;
 const HORA = 60 * MIN;
@@ -47,6 +49,14 @@ export function crearServicioAuth(modelos, opciones = {}) {
   const porCuenta = crearLimitador({ max: opciones.intentosPorCuenta ?? 5, ventanaMs, ahora: cfg.ahora });
   const porIp = crearLimitador({ max: opciones.intentosPorIp ?? 30, ventanaMs, ahora: cfg.ahora });
   const porCambioPassword = crearLimitador({ max: 5, ventanaMs, ahora: cfg.ahora });
+  const porGoogle = crearLimitador({ max: opciones.googleFallosPorIp ?? 20, ventanaMs, ahora: cfg.ahora });
+
+  // Entrar con Google (5.69): el Client ID viene de `opciones.google.clientId` o de la variable GOOGLE_CLIENT_ID (la misma
+  // que usa la carta, 5.51). Sin él la función no está disponible y el login no ofrece el botón.
+  // `opciones.google.verificador` permite probar sin red.
+  const clienteIdGoogle = (opciones.google?.clientId ?? process.env.GOOGLE_CLIENT_ID ?? "").trim() || null;
+  const verificadorGoogle =
+    opciones.google?.verificador ?? (clienteIdGoogle ? crearVerificadorGoogle({ clientId: clienteIdGoogle, ahora: cfg.ahora }) : null);
 
   // Hash de mentira para gastar el mismo tiempo cuando el correo no existe (ver login).
   let hashFalso = null;
@@ -240,6 +250,87 @@ export function crearServicioAuth(modelos, opciones = {}) {
     };
   }
 
+  // ---------- entrar con Google (5.69) ----------
+  /**
+   * El personal entra con su cuenta de Google. `credencial` es el ID token que entrega el botón de Google.
+   *
+   * Solo entra quien YA existe: Google no crea usuarios (las empresas nuevas pasan por la solicitud y su aprobación).
+   * Se exige que Google haya verificado el correo (lo comprueba el verificador) y se busca primero por el `sub` ya
+   * vinculado y, si no hay, por el correo. La primera vez se vincula el `sub` al usuario; desde entonces solo esa cuenta
+   * de Google entra como él, aunque otra con el mismo correo aparezca después. Un `sub` ya vinculado a OTRO usuario nunca
+   * se reasigna.
+   *
+   * Las respuestas de «no puede entrar» son todas el mismo error (sin cuenta, suspendida, sin empresas, vinculada a otra
+   * cuenta de Google): la persona ya demostró ser dueña de ese correo, pero no se cuenta por qué falló.
+   *
+   * La sesión es de método «google»: **no exige cambiar la contraseña temporal** (decisión de Héctor, 5.69). Como una
+   * contraseña temporal conocida por quien la dio no debería sobrevivir, si había una pendiente se anula: pasa a una clave
+   * aleatoria que nadie conoce y la persona puede poner una nueva con «¿Olvidaste tu contraseña?».
+   */
+  async function entrarConGoogle({ credencial, ip = null, agente = null } = {}) {
+    if (!verificadorGoogle) throw new ErrorAuth("GOOGLE_NO_DISPONIBLE", "entrar con Google no está activado");
+    const espera = ip ? porGoogle.espera(ip) : 0;
+    if (espera > 0)
+      throw new ErrorAuth("DEMASIADOS_INTENTOS", "demasiados intentos, espera un momento", { reintentarEnSeg: espera });
+    let g;
+    try {
+      g = await verificadorGoogle.verificar(credencial);
+    } catch (e) {
+      if (ip && e instanceof ErrorAuth && e.codigo === "GOOGLE_INVALIDO") porGoogle.fallo(ip);
+      throw e;
+    }
+    const denegado = () => {
+      if (ip) porGoogle.fallo(ip);
+      return new ErrorAuth("GOOGLE_SIN_CUENTA", "No hay una cuenta activa con ese correo en la plataforma. Pide acceso a tu administrador.");
+    };
+
+    let usuario = await Usuario.findOne({ "google.sub": g.sub });
+    if (!usuario) {
+      usuario = await Usuario.findOne({ correo: g.correo });
+      // Ese usuario ya está vinculado a otra cuenta de Google: no se pisa.
+      if (usuario?.google?.sub && usuario.google.sub !== g.sub) throw denegado();
+    }
+    if (!usuario || usuario.estado !== "activo") throw denegado();
+    const empresas = await membresiasDe(usuario._id);
+    if (!empresas.length) throw denegado();
+
+    if (!usuario.google?.sub) {
+      try {
+        const r = await Usuario.updateOne(
+          { _id: usuario._id, "google.sub": { $exists: false } },
+          { $set: { google: { sub: g.sub, vinculadaTs: new Date(cfg.ahora()) } } },
+        );
+        if (!(r.modifiedCount > 0 || r.nModified > 0)) {
+          // Otra petición lo vinculó justo antes: solo sirve si fue a esta misma cuenta de Google.
+          const ahora = await Usuario.findById(usuario._id).select("google").lean();
+          if (ahora?.google?.sub !== g.sub) throw denegado();
+        }
+      } catch (e) {
+        if (e instanceof ErrorAuth) throw e;
+        if (e?.code === 11000) throw denegado(); // ese `sub` ya es de otro usuario
+        throw e;
+      }
+    }
+    if (usuario.debeCambiarPassword) {
+      await Usuario.updateOne(
+        { _id: usuario._id },
+        { passwordHash: await hashPassword(crypto.randomBytes(32).toString("hex")), debeCambiarPassword: false },
+      );
+    }
+
+    if (ip) porGoogle.exito(ip);
+    const empresaActivaId = empresas.length === 1 ? empresas[0].id : null;
+    const { token, sesion } = await crearSesion({ usuarioId: usuario._id, empresaActivaId, metodo: "google", ip, agente });
+    return {
+      token,
+      sesion: { id: String(sesion._id), expiraTs: sesion.expiraTs },
+      usuario: { id: String(usuario._id), correo: usuario.correo, nombre: usuario.nombre ?? null },
+      empresas: empresas.map(sinPermisos),
+      empresaActivaId,
+      debeCambiarPassword: false,
+    };
+  }
+
   /**
    * La persona cambia su propia contraseña (hay que dar la actual). Cierra el resto de sus sesiones
    * (también las de tablet); la sesión desde la que se cambia sigue abierta.
@@ -318,7 +409,8 @@ export function crearServicioAuth(modelos, opciones = {}) {
       pinHabilitado,
       tienePin,
       metodo: s.metodo,
-      debeCambiarPassword: !!usuario.debeCambiarPassword,
+      // Una sesión de Google no exige cambiar la contraseña temporal (5.69).
+      debeCambiarPassword: s.metodo === "google" ? false : !!usuario.debeCambiarPassword,
       dispositivo: disp ? { id: String(disp._id), nombre: disp.nombre, estacion: disp.estacion } : null,
     };
   }
@@ -415,6 +507,34 @@ export function crearServicioAuth(modelos, opciones = {}) {
         responderError(res, e, next);
       }
     },
+    async google(req, res, next) {
+      try {
+        exigirCsrf(req);
+        const r = await entrarConGoogle({
+          credencial: req.body?.credencial,
+          ip: req.ip ?? null,
+          agente: req.headers?.["user-agent"] ?? null,
+        });
+        res.setHeader("Set-Cookie", cookieDe(r.token));
+        res.status(200).json({
+          usuario: r.usuario,
+          empresas: r.empresas,
+          empresaActivaId: r.empresaActivaId,
+          debeCambiarPassword: false,
+        });
+      } catch (e) {
+        responderError(res, e, next);
+      }
+    },
+    /** Lo único que el login necesita para decidir si ofrece el botón: el Client ID (es público). */
+    async googleConfig(req, res, next) {
+      try {
+        res.setHeader("Cache-Control", "no-store");
+        res.status(200).json({ clientId: clienteIdGoogle });
+      } catch (e) {
+        next(e);
+      }
+    },
     async logout(req, res, next) {
       try {
         exigirCsrf(req);
@@ -491,6 +611,7 @@ export function crearServicioAuth(modelos, opciones = {}) {
     ...marca.api,
     ...datosEmpresa.api,
     login,
+    entrarConGoogle,
     crearSesion,
     obtenerSesion,
     cerrarSesion,
