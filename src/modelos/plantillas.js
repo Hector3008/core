@@ -46,6 +46,33 @@ export const PLANTILLAS = {
       "documento:editar",
     ],
   },
+  // topd (to Picking and Dispatch): ventas → picking → despacho (arquitectura 5.71). Reemplaza a siscore.
+  topd: {
+    vendedor: [
+      "estacion:creacion",
+      "estacion:bandeja",
+      "documento:crear",
+      "documento:leer",
+      "documento:editar",
+      "catalogo:leer",
+      "cliente:*",
+    ],
+    almacen: [
+      "estacion:produccion",
+      "documento:leer",
+      "documento:editar",
+      "catalogo:leer",
+      "cliente:leer",
+    ],
+    revisor: [
+      "estacion:revision",
+      "estacion:bandeja",
+      "documento:leer",
+      "documento:editar",
+      "catalogo:leer",
+      "cliente:leer",
+    ],
+  },
 };
 
 export function plantillasPara(servicios) {
