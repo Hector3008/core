@@ -16,7 +16,12 @@ export const PLANTILLAS = {
       "cliente:cuenta",
       "fidelizacion:canjear",
     ],
-    cocina: ["estacion:cocina", "documento:leer", "documento:editar", "catalogo:disponibilidad"],
+    cocina: [
+      "estacion:cocina",
+      "documento:leer",
+      "documento:editar",
+      "catalogo:disponibilidad",
+    ],
     delivery: [
       "estacion:delivery",
       "documento:leer",
@@ -72,6 +77,10 @@ export const PLANTILLAS = {
       "catalogo:leer",
       "cliente:leer",
     ],
+  },
+
+  agatas: {
+    mesero_juego: ["juego:validar", "juego:leer"],
   },
 };
 
