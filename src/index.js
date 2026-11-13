@@ -19,6 +19,8 @@ import { crearServicioPromociones } from "./promociones/index.js";
 import { montarRutasPromociones } from "./promociones/rutas.js";
 import { crearServicioAnuncios } from "./anuncios/index.js";
 import { montarRutasAnuncios } from "./anuncios/rutas.js";
+import { crearServicioKardex } from "./kardex/index.js";
+import { montarRutasKardex } from "./kardex/rutas.js";
 import { crearServicioResenas } from "./resenas/index.js";
 import { crearServicioSolicitudes } from "./solicitudes/index.js";
 import { montarRutasResenas } from "./resenas/rutas.js";
@@ -41,6 +43,7 @@ export { normalizarCodigoReferido } from "./referidos/index.js";
 export { calcularDescuento } from "./fidelizacion/beneficios.js";
 export { ErrorPromocion } from "./promociones/errores.js";
 export { ErrorAnuncio } from "./anuncios/errores.js";
+export { ErrorKardex } from "./kardex/errores.js";
 export { ErrorResena } from "./resenas/errores.js";
 export { ErrorSolicitud } from "./solicitudes/errores.js";
 export { evaluarPromociones } from "./promociones/evaluador.js";
@@ -107,6 +110,7 @@ export function createCore({ connection, plugins = [], auth = {} } = {}) {
   core.cuentasCliente = crearServicioCuentasCliente(core.modelos, core.auth, core.clientes, core.fidelizacion, auth.cliente, core.referidos);
   core.promociones = crearServicioPromociones(core.modelos, core.auth);
   core.anuncios = crearServicioAnuncios(core.modelos, core.auth);
+  core.kardex = crearServicioKardex(core.modelos, core.auth);
   core.resenas = crearServicioResenas(core.modelos, core.auth);
   core.solicitudes = crearServicioSolicitudes(core.modelos, core.empresas);
   core.auth.montarRutas = (router) => montarRutas(router, core);
@@ -115,6 +119,7 @@ export function createCore({ connection, plugins = [], auth = {} } = {}) {
   core.catalogo.montarRutas = (router) => montarRutasCatalogo(router, core);
   core.promociones.montarRutas = (router) => montarRutasPromociones(router, core);
   core.anuncios.montarRutas = (router) => montarRutasAnuncios(router, core);
+  core.kardex.montarRutas = (router) => montarRutasKardex(router, core);
   core.resenas.montarRutas = (router) => montarRutasResenas(router, core);
 
   return core;

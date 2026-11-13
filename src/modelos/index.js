@@ -16,6 +16,7 @@ import { sesionClienteSchema } from "../cuentas/modelo.js";
 import { movimientoPuntosSchema, beneficioSchema, ticketSchema, retoSchema } from "../fidelizacion/modelo.js";
 import { promocionSchema, usoPromocionSchema, reservaPromocionSchema } from "../promociones/modelo.js";
 import { anuncioSchema } from "../anuncios/modelo.js";
+import { insumoSchema, movimientoKardexSchema } from "../kardex/modelo.js";
 import { resenaSchema } from "../resenas/modelo.js";
 import { referidoSchema } from "../referidos/modelo.js";
 import { solicitudSchema, tokenPasswordSchema } from "../solicitudes/modelo.js";
@@ -49,6 +50,8 @@ export function registrarModelos(core) {
     UsoPromocion: core.model("UsoPromocion", usoPromocionSchema, "usos_promocion"),
     ReservaPromocion: core.model("ReservaPromocion", reservaPromocionSchema, "reservas_promocion"),
     Anuncio: core.model("Anuncio", anuncioSchema, "anuncios"),
+    Insumo: core.model("Insumo", insumoSchema, "kardex_insumos"),
+    MovimientoKardex: core.model("MovimientoKardex", movimientoKardexSchema, "kardex_movimientos"),
     Resena: core.model("Resena", resenaSchema, "resenas"),
     Referido: core.model("Referido", referidoSchema, "referidos"),
     SolicitudEmpresa: core.model("SolicitudEmpresa", solicitudSchema, "solicitudes_empresa"),
