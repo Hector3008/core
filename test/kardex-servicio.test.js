@@ -18,7 +18,7 @@ const rechaza = (p, codigo, status) =>
 
 const cmp = (d, k, v) => {
   if (v && typeof v === "object" && !(v instanceof Date)) {
-    return Object.entries(v).every(([op, x]) => (op === "$lt" ? d[k] < x : op === "$gte" ? d[k] >= x : op === "$lte" ? d[k] <= x : false));
+    return Object.entries(v).every(([op, x]) => (op === "$in" ? x.map(String).includes(String(d[k])) : op === "$lt" ? d[k] < x : op === "$gte" ? d[k] >= x : op === "$lte" ? d[k] <= x : false));
   }
   return String(d[k]) === String(v);
 };
@@ -322,15 +322,92 @@ describe("concurrencia y reparación", () => {
   });
 });
 
+describe("anular y corregir movimientos (5.84)", () => {
+  let m;
+  let cafe;
+  beforeEach(async () => {
+    m = crearMundo();
+    cafe = await m.crearInsumo({ stockMinimo: 100 });
+  });
+  const compra = (o) => m.op("registrarCompra", { insumoId: cafe.id, ...o }, COMPRADOR);
+  const anular = (id, detalle = "me equivoqué", actor = ADM, e = E1) => m.op("anularMovimiento", { movimientoId: id, detalle }, actor, e);
+  const saldo = () => m.op("obtenerInsumo", { insumoId: cafe.id }, LECTOR);
+  const consumir = (ref, cantidad) => m.en(E1, () => m.k.consumirVarios({ empresaId: E1, referencia: ref, lineas: [{ insumoId: cafe.id, cantidad }] }));
+
+  it("anular una compra quita lo que entró, devuelve el promedio y deja el original marcado", async () => {
+    await compra({ cantidad: 1000, costoTotal: 80 });
+    const mala = await compra({ cantidad: 1000000, costoTotal: 500000 });
+    assert.equal((await saldo()).existencia, 1001000);
+    const r = await anular(mala.movimiento.id);
+    assert.deepEqual([r.existencia, r.costoPromedio, r.movimiento.tipo, r.movimiento.cantidad], [1000, 0.08, "anulacion", -1000000]);
+    assert.equal(r.movimiento.anulaA, mala.movimiento.id);
+    assert.equal(r.movimiento.detalle, "me equivoqué");
+    const s = await saldo();
+    assert.deepEqual([s.existencia, s.costoPromedio], [1000, 0.08]);
+    const buena = await compra({ cantidad: 1000, costoTotal: 100 });
+    assert.deepEqual([buena.existencia, buena.costoPromedio], [2000, 0.09]);
+    const lista = await m.op("movimientos", { insumoId: cafe.id }, LECTOR);
+    const filas = lista.movimientos ?? lista;
+    assert.equal(filas.filter((x) => x.tipo === "compra" && x.anulado).length, 1);
+    assert.equal(filas.filter((x) => x.tipo === "anulacion").length, 1);
+    assert.equal(filas.filter((x) => x.tipo === "compra" && !x.anulado).length, 2);
+  });
+
+  it("anular una merma devuelve lo perdido al costo con que salió", async () => {
+    await compra({ cantidad: 1000, costoTotal: 100 });
+    const merma = await m.op("registrarMerma", { insumoId: cafe.id, cantidad: 300, detalle: "humedad" }, COMPRADOR);
+    const r = await anular(merma.movimiento.id, "no fue merma");
+    assert.deepEqual([r.existencia, r.costoPromedio, r.movimiento.cantidad], [1000, 0.1, 300]);
+  });
+
+  it("anular el saldo inicial y un ajuste", async () => {
+    const ini = await m.op("inventarioInicial", { insumoId: cafe.id, cantidad: 500, costoTotal: 100 });
+    const aj = await m.op("contar", { insumoId: cafe.id, cantidad: 450, detalle: "conteo" });
+    assert.equal((await anular(aj.movimiento.id)).existencia, 500);
+    assert.equal((await anular(ini.movimiento.id)).existencia, 0);
+  });
+
+  it("solo una vez, y no se anula una anulación ni un consumo", async () => {
+    const c = await compra({ cantidad: 100, costoTotal: 100 });
+    const a = await anular(c.movimiento.id);
+    await rechaza(anular(c.movimiento.id), "ESTADO_INVALIDO", 409);
+    await rechaza(anular(a.movimiento.id), "ESTADO_INVALIDO", 409);
+    await compra({ cantidad: 100, costoTotal: 100 });
+    await consumir("DOC_ITEM-1", 10);
+    const lista = await m.op("movimientos", { tipo: "consumo" }, LECTOR);
+    const consumo = (lista.movimientos ?? lista)[0];
+    await assert.rejects(anular(consumo.id), (e) => e.codigo === "ESTADO_INVALIDO" && /ítem del pedido/.test(e.message));
+    assert.equal((await saldo()).existencia, 90);
+  });
+
+  it("si la anulación deja el saldo en negativo, lo hace y lo avisa", async () => {
+    const c = await compra({ cantidad: 100, costoTotal: 100 });
+    await consumir("DOC_ITEM-2", 80);
+    const r = await anular(c.movimiento.id);
+    assert.deepEqual([r.existencia, r.negativo], [-80, true]);
+  });
+
+  it("pide kardex:gestionar, motivo e id válido; no cruza empresas", async () => {
+    const c = await compra({ cantidad: 100, costoTotal: 100 });
+    await rechaza(anular(c.movimiento.id, "x", COMPRADOR), "PERMISO_INSUFICIENTE", 403);
+    await rechaza(anular(c.movimiento.id, "x", LECTOR), "PERMISO_INSUFICIENTE", 403);
+    await rechaza(anular(c.movimiento.id, ""), "DATOS_INVALIDOS", 400);
+    await rechaza(anular("zzz"), "DATOS_INVALIDOS", 400);
+    await rechaza(anular("bbbbbbbbbbbbbbbbbbbbbbb9"), "NO_ENCONTRADO", 404);
+    await rechaza(anular(c.movimiento.id, "x", ADM, E2), "NO_ENCONTRADO", 404);
+    assert.equal((await saldo()).existencia, 100);
+  });
+});
+
 describe("manejadores HTTP y rutas", () => {
-  it("monta las 11 rutas con su permiso", () => {
+  it("monta las 12 rutas con su permiso", () => {
     const pedidos = [];
     const rutas = [];
     const router = {};
     for (const v of ["get", "post", "put"]) router[v] = (ruta, ...hs) => rutas.push(`${v.toUpperCase()} ${ruta}`) && hs;
     const h = new Proxy({}, { get: () => () => {} });
     montarRutasKardex(router, { kardex: { manejadores: h }, autenticar: () => () => {}, requierePermiso: (p) => (pedidos.push(p), () => {}) });
-    assert.equal(rutas.length, 11);
+    assert.equal(rutas.length, 12);
     assert.deepEqual([...new Set(pedidos)].sort(), ["kardex:gestionar", "kardex:leer", "kardex:registrar"]);
   });
 

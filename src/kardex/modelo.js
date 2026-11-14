@@ -41,6 +41,7 @@ export const movimientoKardexSchema = new mongoose.Schema(
     existenciaDespues: { type: Number, required: true },
     costoPromedioDespues: { type: Number, required: true },
     presentacion: { type: { _id: false, nombre: String, cantidad: Number, factor: Number }, default: null }, // lo que se escribió, si fue en otra presentación
+    anulaA: { type: ObjectId, default: null }, // en una anulación: el movimiento que deshace (su referencia es ANUL-<id>)
     referencia: { type: String, default: null }, // el documento que originó el movimiento (por ejemplo DOC_ITEM-0000123)
     detalle: { type: String, default: null },
     creadoPor: { type: ObjectId, default: null }, // null = el sistema

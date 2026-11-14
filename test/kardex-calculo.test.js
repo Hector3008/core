@@ -1,7 +1,7 @@
 // Lógica pura del kardex (5.75): validación, presentaciones y costo promedio. Sin base de datos.
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { aUnidadBase, aplicarMovimiento, validarInsumo, validarCantidad, redondear } from "../src/kardex/calculo.js";
+import { aUnidadBase, aplicarMovimiento, deshacerMovimiento, validarInsumo, validarCantidad, redondear } from "../src/kardex/calculo.js";
 import { ErrorKardex } from "../src/kardex/errores.js";
 
 const malo = (fn) => assert.throws(fn, (e) => e instanceof ErrorKardex && e.codigo === "DATOS_INVALIDOS");
@@ -70,4 +70,39 @@ describe("costo promedio", () => {
     assert.deepEqual([e.existencia, e.costoPromedio, e.costoUnitario], [15, 3, 3]);
   });
   it("redondea", () => assert.equal(redondear(0.1 + 0.2, 3), 0.3));
+});
+
+describe("deshacer un movimiento (5.84)", () => {
+  it("anular una compra devuelve el promedio a lo que era sin ella", () => {
+    const antes = { existencia: 1000, costoPromedio: 0.08 };
+    const despues = aplicarMovimiento(antes, { signo: 1, cantidad: 1000, costoUnitario: 0.12 });
+    const d = deshacerMovimiento(despues, { cantidad: 1000, costoUnitario: 0.12 });
+    assert.deepEqual([d.signo, d.cantidad, d.existencia, d.costoPromedio, d.costoUnitario], [-1, 1000, 1000, 0.08, 0.12]);
+  });
+  it("las salidas intermedias (al promedio) no estorban", () => {
+    let e = aplicarMovimiento({ existencia: 0, costoPromedio: 0 }, { signo: 1, cantidad: 1000, costoUnitario: 0.08 });
+    e = aplicarMovimiento(e, { signo: 1, cantidad: 1000, costoUnitario: 0.12 });
+    e = aplicarMovimiento(e, { signo: -1, cantidad: 500 });
+    const d = deshacerMovimiento(e, { cantidad: 1000, costoUnitario: 0.12 });
+    assert.deepEqual([d.existencia, d.costoPromedio], [500, 0.06]); // (1500·0,10 − 1000·0,12) / 500
+  });
+  it("si no queda existencia el promedio no cambia; si queda en negativo se marca", () => {
+    const solo = aplicarMovimiento({ existencia: 0, costoPromedio: 0 }, { signo: 1, cantidad: 10, costoUnitario: 2 });
+    const d = deshacerMovimiento(solo, { cantidad: 10, costoUnitario: 2 });
+    assert.deepEqual([d.existencia, d.costoPromedio, d.negativo], [0, 2, false]);
+    const gastado = aplicarMovimiento(solo, { signo: -1, cantidad: 8 });
+    const n = deshacerMovimiento(gastado, { cantidad: 10, costoUnitario: 2 });
+    assert.deepEqual([n.existencia, n.negativo], [-8, true]);
+  });
+  it("anular una salida la devuelve al costo con que salió", () => {
+    const d = deshacerMovimiento({ existencia: 90, costoPromedio: 0.5 }, { cantidad: -10, costoUnitario: 0.4 });
+    assert.deepEqual([d.signo, d.cantidad, d.existencia], [1, 10, 100]);
+    assert.equal(d.costoPromedio, redondear((90 * 0.5 + 10 * 0.4) / 100, 6));
+  });
+  it("con el saldo previo (original = último movimiento) el promedio vuelve exacto", () => {
+    const previo = { existencia: 1000, costoPromedio: 0.08 };
+    const despues = aplicarMovimiento(previo, { signo: 1, cantidad: 1000000, costoUnitario: 0.5 });
+    const d = deshacerMovimiento(despues, { cantidad: 1000000, costoUnitario: 0.5 }, previo);
+    assert.deepEqual([d.existencia, d.costoPromedio], [1000, 0.08]);
+  });
 });

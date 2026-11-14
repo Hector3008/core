@@ -17,6 +17,7 @@
  *   POST /insumos/:insumoId/conteo      kardex:gestionar  { cantidad, presentacion?, detalle } → 201 (200 si no había diferencia)
  *   POST /insumos/:insumoId/reparar     kardex:gestionar
  *   GET  /movimientos                   kardex:leer       ?insumoId= &tipo= &referencia= &desde= &hasta= &limite= &saltar=
+ *   POST /movimientos/:movimientoId/anular  kardex:gestionar  { detalle } → 201 (compras, mermas, ajustes e inventario inicial; deja el movimiento marcado como anulado)
  *   GET  /valorizacion                  kardex:leer
  */
 export function montarRutasKardex(router, { kardex, autenticar, requierePermiso }) {
@@ -35,6 +36,7 @@ export function montarRutasKardex(router, { kardex, autenticar, requierePermiso 
   router.post("/insumos/:insumoId/conteo", ...gestionar, m.conteo);
   router.post("/insumos/:insumoId/reparar", ...gestionar, m.reparar);
   router.get("/movimientos", ...leer, m.movimientos);
+  router.post("/movimientos/:movimientoId/anular", ...gestionar, m.anular);
   router.get("/valorizacion", ...leer, m.valorizacion);
 
   return router;

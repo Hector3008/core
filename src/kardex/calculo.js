@@ -11,7 +11,9 @@ import { ErrorKardex } from "./errores.js";
 //   - una salida (consumo, merma, ajuste a la baja) sale al promedio vigente y no lo cambia;
 //   - un ajuste al alza entra al promedio vigente (no lo cambia).
 
-export const TIPOS_MOVIMIENTO = Object.freeze(["inventario_inicial", "compra", "consumo", "reversa", "merma", "ajuste"]);
+export const TIPOS_MOVIMIENTO = Object.freeze(["inventario_inicial", "compra", "consumo", "reversa", "merma", "ajuste", "anulacion"]);
+// Lo que el personal puede anular (5.84). Un consumo se devuelve anulando el ítem del pedido (reversa); una anulación no se anula.
+export const TIPOS_ANULABLES = Object.freeze(["inventario_inicial", "compra", "merma", "ajuste"]);
 export const MAX_INSUMOS = 2000;
 export const MAX_PRESENTACIONES = 10;
 export const MAX_CANTIDAD = 1e9;
@@ -172,4 +174,27 @@ export function aplicarMovimiento(estado, { signo, cantidad, costoUnitario }) {
   else if (existencia0 <= 0) costoPromedio = costo;
   else costoPromedio = redondear((existencia0 * promedio0 + cantidad * costo) / existencia, 6);
   return { existencia, costoPromedio, costoUnitario: costo, negativo: existencia < 0 };
+}
+
+/**
+ * Deshace un movimiento ya guardado (5.84) con otro de signo contrario al mismo costo con que se hizo. `original` trae
+ * `cantidad` con signo y `costoUnitario`. Devuelve { signo, cantidad, ...estado nuevo } como `aplicarMovimiento`.
+ *   - Si el original entró (compra, inicial, ajuste al alza), se quita su valor del inventario: el promedio vuelve a lo que
+ *     era sin él (las salidas que hubo entre tanto salieron al promedio y no lo movieron, así que la cuenta es exacta).
+ *     Si no queda existencia, el promedio no cambia.
+ *   - Si el original salió (merma, ajuste a la baja), vuelve a entrar al costo con que salió, como una reversa.
+ */
+/** `previo`: el saldo justo antes del original; solo se pasa si el original es el último del libro (así el promedio vuelve exacto, sin deriva de redondeo). */
+export function deshacerMovimiento(estado, original, previo = null) {
+  const q = Number(original.cantidad);
+  const costo = Number(original.costoUnitario);
+  const cantidad = Math.abs(q);
+  if (q < 0) return { signo: 1, cantidad, ...aplicarMovimiento(estado, { signo: 1, cantidad, costoUnitario: costo }) };
+  const existencia0 = estado?.existencia ?? 0;
+  const promedio0 = estado?.costoPromedio ?? 0;
+  const existencia = redondear(existencia0 - cantidad, 3);
+  let costoPromedio = promedio0;
+  if (previo && existencia === redondear(previo.existencia, 3)) return { signo: -1, cantidad, existencia, costoPromedio: previo.costoPromedio, costoUnitario: costo, negativo: existencia < 0 };
+  if (existencia > 0 && existencia0 > 0) costoPromedio = Math.max(0, redondear((existencia0 * promedio0 - cantidad * costo) / existencia, 6));
+  return { signo: -1, cantidad, existencia, costoPromedio, costoUnitario: costo, negativo: existencia < 0 };
 }

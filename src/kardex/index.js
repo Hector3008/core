@@ -3,7 +3,7 @@ import { permite } from "../permisos.js";
 import { ErrorAuth } from "../auth/errores.js";
 import { ErrorKardex } from "./errores.js";
 import {
-  TIPOS_MOVIMIENTO, MAX_INSUMOS, aUnidadBase, aplicarMovimiento, claveDeCodigo, redondear,
+  TIPOS_ANULABLES, TIPOS_MOVIMIENTO, MAX_INSUMOS, aUnidadBase, aplicarMovimiento, deshacerMovimiento, claveDeCodigo, redondear,
   validarCantidad, validarDetalle, validarInsumo,
 } from "./calculo.js";
 
@@ -69,6 +69,7 @@ export function crearServicioKardex({ Empresa, Insumo, MovimientoKardex }, auth)
     costoPromedioDespues: m.costoPromedioDespues,
     presentacion: m.presentacion ?? null,
     referencia: m.referencia ?? null,
+    anulaA: m.anulaA ? String(m.anulaA) : null,
     detalle: m.detalle ?? null,
     creadoPor: m.creadoPor ? String(m.creadoPor) : null,
     ts: m.ts,
@@ -162,7 +163,7 @@ export function crearServicioKardex({ Empresa, Insumo, MovimientoKardex }, auth)
    * llegó antes, se reintenta con el estado nuevo. Con `referencia`, repetir no hace nada (`yaRegistrado`).
    * `cantidad` es positiva y en unidad base; `signo` dice si entra o sale.
    */
-  async function aplicar({ empresaId, insumoId, tipo, signo, cantidad, costoUnitario = null, detalle = null, referencia = null, presentacion = null, creadoPor = null, ahora = new Date() }) {
+  async function aplicar({ empresaId, insumoId, tipo, signo, cantidad, costoUnitario = null, detalle = null, referencia = null, presentacion = null, creadoPor = null, ahora = new Date(), calcular = null, extra = {} }) {
     if (!TIPOS_MOVIMIENTO.includes(tipo)) throw new ErrorKardex("DATOS_INVALIDOS", `tipo de movimiento desconocido: ${tipo}`);
     if (referencia) {
       const previo = await conEmpresa(empresaId, async () => await MovimientoKardex.findOne({ insumoId, referencia, tipo }).lean());
@@ -171,7 +172,7 @@ export function crearServicioKardex({ Empresa, Insumo, MovimientoKardex }, auth)
     for (let intento = 0; intento < REINTENTOS; intento += 1) {
       const ultimo = await ultimoMovimiento(empresaId, insumoId);
       const secuencia = (ultimo?.secuencia ?? 0) + 1;
-      const nuevo = aplicarMovimiento(estadoDe(ultimo), { signo, cantidad, costoUnitario });
+      const nuevo = calcular ? calcular(estadoDe(ultimo), ultimo) : aplicarMovimiento(estadoDe(ultimo), { signo, cantidad, costoUnitario });
       const doc = {
         insumoId, secuencia, tipo,
         cantidad: signo * cantidad,
@@ -179,7 +180,7 @@ export function crearServicioKardex({ Empresa, Insumo, MovimientoKardex }, auth)
         valor: redondear(signo * cantidad * nuevo.costoUnitario, 4),
         existenciaDespues: nuevo.existencia,
         costoPromedioDespues: nuevo.costoPromedio,
-        presentacion, referencia, detalle, creadoPor, ts: ahora,
+        presentacion, referencia, detalle, creadoPor, ts: ahora, ...extra,
       };
       let creado;
       try {
@@ -363,7 +364,44 @@ export function crearServicioKardex({ Empresa, Insumo, MovimientoKardex }, auth)
     const lista = await conEmpresa(empresaId, async () =>
       await MovimientoKardex.find(f).sort({ ts: -1, secuencia: -1 }).skip(sal).limit(lim).lean(),
     );
-    return lista.map(dtoMov);
+    // Marca los que ya fueron anulados (5.84): la anulación es otro movimiento, más nuevo, con referencia ANUL-<id>.
+    const ids = lista.map((m) => String(m._id)).filter(Boolean);
+    const anuladas = ids.length
+      ? await conEmpresa(empresaId, async () =>
+          await MovimientoKardex.find({ tipo: "anulacion", referencia: { $in: ids.map((i) => `ANUL-${i}`) } }).lean(),
+        )
+      : [];
+    const anulados = new Set(anuladas.map((a) => String(a.anulaA)));
+    return lista.map((m) => ({ ...dtoMov(m), anulado: anulados.has(String(m._id)) }));
+  }
+
+  /**
+   * Anula un movimiento manual con otro de signo contrario (el libro no se edita: se corrige anulando y registrando de nuevo).
+   * Solo compras, mermas, ajustes e inventario inicial; un consumo se devuelve anulando el ítem del pedido. El motivo es
+   * obligatorio y el movimiento original queda en el libro marcado como anulado. Si ya fue anulado, es un error (`ESTADO_INVALIDO`).
+   */
+  async function anularMovimiento({ empresaId, actor, movimientoId, detalle }) {
+    exigir(actor, "kardex:gestionar");
+    idValido(movimientoId, "movimientoId");
+    const motivo = validarDetalle(detalle, { obligatorio: true, nombre: "detalle (motivo de la anulación)" });
+    const original = await conEmpresa(empresaId, async () => await MovimientoKardex.findOne({ _id: movimientoId }).lean());
+    if (!original) throw new ErrorKardex("NO_ENCONTRADO", "movimiento no encontrado");
+    if (!TIPOS_ANULABLES.includes(original.tipo))
+      throw new ErrorKardex("ESTADO_INVALIDO", original.tipo === "consumo" || original.tipo === "reversa"
+        ? "un consumo se devuelve anulando el ítem del pedido, no desde aquí"
+        : "este movimiento no se puede anular");
+    const insumoId = String(original.insumoId);
+    const insumo = await cargarInsumo(empresaId, insumoId);
+    const referencia = `ANUL-${movimientoId}`;
+    const anterior = original.secuencia > 1 ? await conEmpresa(empresaId, async () => await MovimientoKardex.findOne({ insumoId, secuencia: original.secuencia - 1 }).lean()) : null;
+    const previo = { existencia: anterior?.existenciaDespues ?? 0, costoPromedio: anterior?.costoPromedioDespues ?? 0 };
+    const r = await aplicar({
+      empresaId, insumoId, tipo: "anulacion", signo: original.cantidad > 0 ? -1 : 1, cantidad: Math.abs(original.cantidad),
+      detalle: motivo, referencia, creadoPor: actor.usuarioId ?? null,
+      calcular: (estado, ultimo) => deshacerMovimiento(estado, original, String(ultimo?._id) === String(original._id) ? previo : null), extra: { anulaA: movimientoId },
+    });
+    if (r.yaRegistrado) throw new ErrorKardex("ESTADO_INVALIDO", "este movimiento ya fue anulado");
+    return respuesta(insumo, r);
   }
 
   /** Rehace la copia del saldo de un insumo desde su último movimiento (si alguna vez quedó desfasada). */
@@ -421,12 +459,14 @@ export function crearServicioKardex({ Empresa, Insumo, MovimientoKardex }, auth)
     reparar: envolver(true, async (req, res) => res.status(200).json(await repararSaldo({ ...base(req), insumoId: id(req) }))),
     /** GET /kardex/movimientos?insumoId=&tipo=&referencia=&desde=&hasta=&limite=&saltar= → { movimientos } (kardex:leer) */
     movimientos: envolver(false, async (req, res) => res.status(200).json({ movimientos: await movimientos({ ...base(req), ...(req.query ?? {}) }) })),
+    /** POST /kardex/movimientos/:movimientoId/anular { detalle } (kardex:gestionar) */
+    anular: envolver(true, async (req, res) => res.status(201).json(await anularMovimiento({ ...base(req), movimientoId: req.params?.movimientoId, detalle: cuerpo(req).detalle }))),
     /** GET /kardex/valorizacion (kardex:leer) */
     valorizacion: envolver(false, async (req, res) => res.status(200).json(await valorizacion({ ...base(req) }))),
   };
 
   return {
     crearInsumo, editarInsumo, obtenerInsumo, listarInsumos, valorizacion, inventarioInicial, registrarCompra, registrarMerma,
-    contar, consumirVarios, revertir, movimientos, repararSaldo, manejadores,
+    contar, consumirVarios, revertir, anularMovimiento, movimientos, repararSaldo, manejadores,
   };
 }
